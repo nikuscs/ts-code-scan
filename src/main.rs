@@ -187,12 +187,10 @@ fn scan(
     let parsed = file_indices.len();
     let error_count = file_indices.iter().filter(|fi| fi.parse_errors > 0).count();
 
-    // Run rules if any enabled
+    // Run rules (all rules when none specified)
     let mut file_indices = file_indices;
-    if !enabled_rules.is_empty() {
-        for fi in &mut file_indices {
-            rules::run_rules(enabled_rules, fi);
-        }
+    for fi in &mut file_indices {
+        rules::run_rules(enabled_rules, fi);
     }
 
     // Sort by path for deterministic output
