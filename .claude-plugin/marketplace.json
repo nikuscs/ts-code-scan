@@ -1,0 +1,19 @@
+{
+  "name": "ts-code-scan",
+  "owner": {
+    "name": "nikuscs"
+  },
+  "metadata": {
+    "description": "Fast TS/JS codebase indexer for AI agents"
+  },
+  "plugins": [
+    {
+      "name": "code-scan",
+      "source": "./plugin",
+      "description": "Index functions, bindings, exports, and lint violations in TS/JS codebases",
+      "version": "0.1.0",
+      "license": "MIT",
+      "keywords": ["typescript", "javascript", "indexer", "codebase", "ai"]
+    }
+  ]
+}

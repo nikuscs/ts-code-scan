@@ -1,0 +1,8 @@
+/target
+Cargo.lock
+.env
+*.log
+.DS_Store
+tarpaulin-report.html
+lcov.info
+cobertura.xml
