@@ -185,12 +185,11 @@ impl<'a> Visit<'a> for Collector<'_> {
             let name = id.name.to_string();
             let prev_count = self.functions.len();
             ast_visit::walk::walk_variable_declarator(self, it);
-            if self.functions.len() > prev_count
-                && let Some(last) = self.functions.last_mut()
-                && last.kind == FunctionKind::Arrow
-                && last.name.is_none()
-            {
-                last.name = Some(name);
+            if self.functions.len() > prev_count {
+                let first_new = &mut self.functions[prev_count];
+                if first_new.kind == FunctionKind::Arrow && first_new.name.is_none() {
+                    first_new.name = Some(name);
+                }
             }
             return;
         }

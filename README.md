@@ -6,16 +6,32 @@
 
 **Fast Rust CLI that indexes TypeScript/JavaScript codebases for AI agents.**
 
-> **Disclaimer:** This project is for **educational purposes and AI automation research only**.
-> The authors are not responsible for any misuse or for any damages resulting from the use of this tool.
-> Users are solely responsible for ensuring compliance with applicable laws and the terms of service
-> of any websites accessed. This software is provided "as-is" without warranty of any kind.
->
-> If you are a rights holder and wish to have this project removed, please [contact me](https://github.com/nikuscs).
-
-> **Note:** This project was partially developed with AI assistance and may contain bugs or unexpected behavior. Use at your own risk.
-
 Give any AI agent a compact overview of all functions, bindings, exports, and lint violations across an entire TS/JS project in under a second. Outputs stable JSON in compact (tuple arrays, token-friendly) or verbose (full objects) mode.
+
+## Quick start
+
+Scan a folder and get every function in every file:
+
+```bash
+code-scan index --root src/
+```
+
+```json
+{
+  "ver": 1,
+  "stats": { "files": 3, "parsed": 3, "skipped": 0, "errors": 0 },
+  "f": [
+    ["src/auth.ts", 5, 0, "login", 1, "fn"],
+    ["src/auth.ts", 18, 0, "logout", 1, "fn"],
+    ["src/auth.ts", 30, 0, "refreshToken", 1, "arr"],
+    ["src/hooks.ts", 3, 0, "useUser", 1, "arr"],
+    ["src/hooks.ts", 15, 0, "useAuth", 1, "arr"],
+    ["src/utils.ts", 1, 0, "formatDate", 1, "fn"]
+  ]
+}
+```
+
+Each entry is `[file, line, col, name, exported, kind]`. You get all functions grouped by file — feed it to an LLM and it instantly knows what every file in the project does.
 
 ## Why?
 
@@ -202,6 +218,17 @@ Full objects with spans:
 - [🕹️ scrauper](https://github.com/nikuscs/scrauper) — Multi-threaded ScreenScraper.fr scraper for ES-DE
 - [⚖️ kante-kusta](https://github.com/nikuscs/kante-kusta) — KuantoKusta.pt price comparison CLI
 - [🕵️ olx-tracker](https://github.com/nikuscs/olx-tracker) — Track OLX.pt listings and get alerts on deals
+
+## Disclaimer
+
+> This project is for **educational purposes and AI automation research only**.
+> The authors are not responsible for any misuse or for any damages resulting from the use of this tool.
+> Users are solely responsible for ensuring compliance with applicable laws and the terms of service
+> of any websites accessed. This software is provided "as-is" without warranty of any kind.
+>
+> If you are a rights holder and wish to have this project removed, please [contact me](https://github.com/nikuscs).
+
+> **Note:** This project was partially developed with AI assistance and may contain bugs or unexpected behavior. Use at your own risk.
 
 ## License
 
