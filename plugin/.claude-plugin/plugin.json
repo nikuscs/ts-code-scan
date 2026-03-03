@@ -1,0 +1,10 @@
+{
+  "name": "code-scan",
+  "description": "Index functions, bindings, exports, and lint violations in TS/JS codebases",
+  "version": "0.1.0",
+  "author": {
+    "name": "nikuscs"
+  },
+  "repository": "https://github.com/nikuscs/ts-code-scan",
+  "license": "MIT"
+}
