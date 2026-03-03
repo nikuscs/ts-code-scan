@@ -71,7 +71,12 @@ jobs:
       - name: Get current version
         id: current
         run: |
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG_VERSION=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | sort -V | tail -n1 || true)
+          if [ -n "$TAG_VERSION" ]; then
+            VERSION="$TAG_VERSION"
+          else
+            VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Current version: $VERSION"
 
@@ -103,6 +108,10 @@ jobs:
 
       - name: Create tag
         run: |
+          if git ls-remote --tags origin "refs/tags/${{ steps.bump.outputs.tag }}" | grep -q "${{ steps.bump.outputs.tag }}"; then
+            echo "::error::Tag ${{ steps.bump.outputs.tag }} already exists on origin"
+            exit 1
+          fi
           git tag -a "${{ steps.bump.outputs.tag }}" -m "Release ${{ steps.bump.outputs.tag }}"
           git push origin "${{ steps.bump.outputs.tag }}"
 
