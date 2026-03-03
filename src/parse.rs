@@ -16,7 +16,6 @@ pub fn process_file(path: &Path, root: &Path, filter: FunctionKindsFilter) -> Re
     let source_type = SourceType::from_path(path)
         .map_err(|_| anyhow::anyhow!("unsupported file type: {}", path.display()))?;
 
-    // Relative path for output
     let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let rel_path =
         canonical_path.strip_prefix(root).unwrap_or(&canonical_path).to_string_lossy().to_string();
@@ -54,3 +53,7 @@ pub fn process_file(path: &Path, root: &Path, filter: FunctionKindsFilter) -> Re
         parse_errors,
     })
 }
+
+#[cfg(test)]
+#[path = "parse_test.rs"]
+mod tests;

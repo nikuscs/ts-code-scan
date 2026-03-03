@@ -2,7 +2,7 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use crate::index::{OutputMode, ScanResult};
+use crate::index::{FunctionInfo, OutputMode, ScanResult, Stats};
 
 pub fn write_result<W: Write>(
     result: &ScanResult,
@@ -18,17 +18,22 @@ pub fn write_result<W: Write>(
             let verbose = VerboseOutput::from(result);
             serde_json::to_writer_pretty(w, &verbose)?;
         }
+        OutputMode::Files => {
+            let files = FilesOutput::from(result);
+            serde_json::to_writer_pretty(w, &files)?;
+        }
+        OutputMode::Folders => {
+            let folders = FoldersOutput::from(result);
+            serde_json::to_writer_pretty(w, &folders)?;
+        }
     }
     Ok(())
 }
 
-// ── Compact output ───────────────────────────────────────────────
-// Tuple arrays for token efficiency
-
 #[derive(Serialize)]
 struct CompactOutput {
     ver: u8,
-    stats: CompactStats,
+    stats: Stats,
     /// Functions: [file, line, col, name, exported(0/1), kind]
     f: Vec<(String, u32, u32, String, u8, String)>,
     /// Bindings: [file, line, col, name, kind, refs]
@@ -42,20 +47,17 @@ struct CompactOutput {
     err: Vec<String>,
 }
 
-#[derive(Serialize)]
-struct CompactStats {
-    files: usize,
-    parsed: usize,
-    skipped: usize,
-    errors: usize,
-}
-
 impl From<&ScanResult> for CompactOutput {
     fn from(r: &ScanResult) -> Self {
-        let mut f = Vec::new();
-        let mut b = Vec::new();
-        let mut x = Vec::new();
-        let mut viol = Vec::new();
+        let total_functions = r.file_indices.iter().map(|fi| fi.functions.len()).sum();
+        let total_bindings = r.file_indices.iter().map(|fi| fi.bindings.len()).sum();
+        let total_exports = r.file_indices.iter().map(|fi| fi.exports.len()).sum();
+        let total_violations = r.file_indices.iter().map(|fi| fi.violations.len()).sum();
+
+        let mut f = Vec::with_capacity(total_functions);
+        let mut b = Vec::with_capacity(total_bindings);
+        let mut x = Vec::with_capacity(total_exports);
+        let mut viol = Vec::with_capacity(total_violations);
 
         for fi in &r.file_indices {
             for func in &fi.functions {
@@ -74,10 +76,7 @@ impl From<&ScanResult> for CompactOutput {
                     binding.line,
                     binding.col,
                     binding.name.clone(),
-                    serde_json::to_value(binding.kind)
-                        .ok()
-                        .and_then(|v| v.as_str().map(String::from))
-                        .unwrap_or_default(),
+                    binding.kind.as_str().to_string(),
                     binding.refs,
                 ));
             }
@@ -89,31 +88,16 @@ impl From<&ScanResult> for CompactOutput {
             }
         }
 
-        Self {
-            ver: r.ver,
-            stats: CompactStats {
-                files: r.stats.files,
-                parsed: r.stats.parsed,
-                skipped: r.stats.skipped,
-                errors: r.stats.errors,
-            },
-            f,
-            b,
-            x,
-            viol,
-            err: r.errors.clone(),
-        }
+        Self { ver: r.ver, stats: r.stats.clone(), f, b, x, viol, err: r.errors.clone() }
     }
 }
-
-// ── Verbose output ───────────────────────────────────────────────
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VerboseOutput {
     ver: u8,
     root: String,
-    stats: VerboseStats,
+    stats: Stats,
     functions: Vec<VerboseFunction>,
     bindings: Vec<VerboseBinding>,
     exports: Vec<VerboseExport>,
@@ -121,14 +105,6 @@ struct VerboseOutput {
     violations: Vec<VerboseViolation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     errors: Vec<String>,
-}
-
-#[derive(Serialize)]
-struct VerboseStats {
-    files: usize,
-    parsed: usize,
-    skipped: usize,
-    errors: usize,
 }
 
 #[derive(Serialize)]
@@ -184,10 +160,15 @@ struct VerboseViolation {
 
 impl From<&ScanResult> for VerboseOutput {
     fn from(r: &ScanResult) -> Self {
-        let mut functions = Vec::new();
-        let mut bindings = Vec::new();
-        let mut exports = Vec::new();
-        let mut violations = Vec::new();
+        let total_functions = r.file_indices.iter().map(|fi| fi.functions.len()).sum();
+        let total_bindings = r.file_indices.iter().map(|fi| fi.bindings.len()).sum();
+        let total_exports = r.file_indices.iter().map(|fi| fi.exports.len()).sum();
+        let total_violations = r.file_indices.iter().map(|fi| fi.violations.len()).sum();
+
+        let mut functions = Vec::with_capacity(total_functions);
+        let mut bindings = Vec::with_capacity(total_bindings);
+        let mut exports = Vec::with_capacity(total_exports);
+        let mut violations = Vec::with_capacity(total_violations);
 
         for fi in &r.file_indices {
             for func in &fi.functions {
@@ -208,10 +189,7 @@ impl From<&ScanResult> for VerboseOutput {
                 bindings.push(VerboseBinding {
                     file: fi.path.clone(),
                     name: binding.name.clone(),
-                    kind: serde_json::to_value(binding.kind)
-                        .ok()
-                        .and_then(|v| v.as_str().map(String::from))
-                        .unwrap_or_default(),
+                    kind: binding.kind.as_str().to_string(),
                     exported: binding.exported,
                     refs: binding.refs,
                     decl: VerbosePos { line: binding.line, col: binding.col },
@@ -237,12 +215,7 @@ impl From<&ScanResult> for VerboseOutput {
         Self {
             ver: r.ver,
             root: r.root.clone(),
-            stats: VerboseStats {
-                files: r.stats.files,
-                parsed: r.stats.parsed,
-                skipped: r.stats.skipped,
-                errors: r.stats.errors,
-            },
+            stats: r.stats.clone(),
             functions,
             bindings,
             exports,
@@ -252,7 +225,115 @@ impl From<&ScanResult> for VerboseOutput {
     }
 }
 
-// ── Rules-only output ────────────────────────────────────────────
+use std::collections::BTreeMap;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FilesOutput {
+    ver: u8,
+    stats: Stats,
+    files: BTreeMap<String, Vec<String>>,
+}
+
+impl From<&ScanResult> for FilesOutput {
+    fn from(r: &ScanResult) -> Self {
+        let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for fi in &r.file_indices {
+            let out = compute_dot_names(&fi.functions);
+            map.insert(fi.path.clone(), out);
+        }
+        Self { ver: r.ver, stats: r.stats.clone(), files: map }
+    }
+}
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct FolderSummary {
+    functions: usize,
+    names: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FoldersOutput {
+    ver: u8,
+    stats: Stats,
+    folders: BTreeMap<String, FolderSummary>,
+}
+
+impl From<&ScanResult> for FoldersOutput {
+    fn from(r: &ScanResult) -> Self {
+        let mut map: BTreeMap<String, FolderSummary> = BTreeMap::new();
+        for fi in &r.file_indices {
+            let dir = std::path::Path::new(&fi.path).parent().map_or_else(
+                || ".".to_string(),
+                |p| {
+                    let s = p.to_string_lossy();
+                    if s.is_empty() { ".".to_string() } else { s.to_string() }
+                },
+            );
+            let entry = map.entry(dir).or_default();
+            entry.functions += fi.functions.len();
+            let dot_names = compute_dot_names(&fi.functions);
+            entry.names.extend(dot_names);
+        }
+        for entry in map.values_mut() {
+            entry.names.sort();
+            entry.names.dedup();
+        }
+        Self { ver: r.ver, stats: r.stats.clone(), folders: map }
+    }
+}
+
+fn compute_dot_names(funcs: &[FunctionInfo]) -> Vec<String> {
+    struct Named<'a> {
+        name: &'a str,
+        start: u32,
+        end: u32,
+    }
+    let named: Vec<Named> = funcs
+        .iter()
+        .filter_map(|f| {
+            f.name.as_deref().map(|n| Named { name: n, start: f.line, end: f.line_end })
+        })
+        .collect();
+
+    let mut out: Vec<String> = Vec::with_capacity(named.len());
+    for (i, child) in named.iter().enumerate() {
+        let mut parent_name: Option<&str> = None;
+        let mut parent_span: Option<(u32, u32)> = None;
+        for (j, cand) in named.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            if cand.start <= child.start && cand.end >= child.end {
+                if let Some((ps, pe)) = parent_span {
+                    let cur_len = pe.saturating_sub(ps);
+                    let new_len = cand.end.saturating_sub(cand.start);
+                    if new_len < cur_len {
+                        parent_span = Some((cand.start, cand.end));
+                        parent_name = Some(cand.name);
+                    }
+                } else {
+                    parent_span = Some((cand.start, cand.end));
+                    parent_name = Some(cand.name);
+                }
+            }
+        }
+        if let Some(p) = parent_name {
+            out.push(format!("{}.{}", p, child.name));
+        } else {
+            out.push(child.name.to_string());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[cfg(test)]
+#[path = "output_test.rs"]
+mod tests;
 
 pub fn write_rules_result<W: Write>(
     result: &ScanResult,
@@ -264,7 +345,7 @@ pub fn write_rules_result<W: Write>(
             let compact = CompactRulesOutput::from(result);
             serde_json::to_writer(w, &compact)?;
         }
-        OutputMode::Verbose => {
+        OutputMode::Verbose | OutputMode::Files | OutputMode::Folders => {
             let verbose = VerboseRulesOutput::from(result);
             serde_json::to_writer_pretty(w, &verbose)?;
         }
@@ -275,7 +356,7 @@ pub fn write_rules_result<W: Write>(
 #[derive(Serialize)]
 struct CompactRulesOutput {
     ver: u8,
-    stats: CompactStats,
+    stats: Stats,
     viol: Vec<(String, String, usize, Vec<String>)>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     err: Vec<String>,
@@ -283,23 +364,14 @@ struct CompactRulesOutput {
 
 impl From<&ScanResult> for CompactRulesOutput {
     fn from(r: &ScanResult) -> Self {
-        let mut viol = Vec::new();
+        let total_violations = r.file_indices.iter().map(|fi| fi.violations.len()).sum();
+        let mut viol = Vec::with_capacity(total_violations);
         for fi in &r.file_indices {
             for v in &fi.violations {
                 viol.push((fi.path.clone(), v.rule.clone(), v.count, v.details.clone()));
             }
         }
-        Self {
-            ver: r.ver,
-            stats: CompactStats {
-                files: r.stats.files,
-                parsed: r.stats.parsed,
-                skipped: r.stats.skipped,
-                errors: r.stats.errors,
-            },
-            viol,
-            err: r.errors.clone(),
-        }
+        Self { ver: r.ver, stats: r.stats.clone(), viol, err: r.errors.clone() }
     }
 }
 
@@ -307,7 +379,7 @@ impl From<&ScanResult> for CompactRulesOutput {
 #[serde(rename_all = "camelCase")]
 struct VerboseRulesOutput {
     ver: u8,
-    stats: VerboseStats,
+    stats: Stats,
     violations: Vec<VerboseViolation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     errors: Vec<String>,
@@ -315,7 +387,8 @@ struct VerboseRulesOutput {
 
 impl From<&ScanResult> for VerboseRulesOutput {
     fn from(r: &ScanResult) -> Self {
-        let mut violations = Vec::new();
+        let total_violations = r.file_indices.iter().map(|fi| fi.violations.len()).sum();
+        let mut violations = Vec::with_capacity(total_violations);
         for fi in &r.file_indices {
             for v in &fi.violations {
                 violations.push(VerboseViolation {
@@ -326,16 +399,6 @@ impl From<&ScanResult> for VerboseRulesOutput {
                 });
             }
         }
-        Self {
-            ver: r.ver,
-            stats: VerboseStats {
-                files: r.stats.files,
-                parsed: r.stats.parsed,
-                skipped: r.stats.skipped,
-                errors: r.stats.errors,
-            },
-            violations,
-            errors: r.errors.clone(),
-        }
+        Self { ver: r.ver, stats: r.stats.clone(), violations, errors: r.errors.clone() }
     }
 }

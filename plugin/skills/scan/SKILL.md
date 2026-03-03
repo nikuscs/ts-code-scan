@@ -4,7 +4,9 @@ description: Index all functions, bindings, and exports in a TS/JS codebase for 
 allowed-tools: Bash, Read
 ---
 
-Run `code-scan index --root . --mode compact` to get a compact JSON overview of all functions and bindings in the current project.
+Run `code-scan index --root . --mode files` to get a per-file JSON map of function names (best for LLMs). For summaries, use `--mode folders`. Use `--mode compact` or `--mode verbose` when you need raw or detailed records.
+
+- Note: nested functions are emitted with dot notation based on their nearest enclosing named function (e.g., `createBlogRegistry.get`).
 
 If $ARGUMENTS is provided:
 - If it looks like a file path (contains `/` or ends in `.ts`/`.js`/`.tsx`/`.jsx`), use `--file $ARGUMENTS`
@@ -19,6 +21,100 @@ Parse the compact JSON output and present a clear summary:
 4. **Violations** (if rules mode): group by rule, show affected files
 
 Keep the summary concise — this is meant for quick orientation, not exhaustive detail.
+
+### Group by file (built-in)
+
+```bash
+code-scan index --root . --mode files
+```
+
+Example output (dot-notation for nested functions):
+
+```json
+{
+  "ver": 1,
+  "stats": { "files": 6, "parsed": 6, "skipped": 0, "errors": 0 },
+  "files": {
+    "services/blog.service.ts": [
+      "calculateReadingTime",
+      "createBlogRegistry",
+      "createBlogRegistry.get",
+      "createBlogRegistry.getAllPosts"
+    ],
+    "services/rss.service.ts": ["createRssResponse", "createRssXml"]
+  }
+}
+```
+
+### Group by file (from compact, with jq)
+
+Per-file function names from compact output:
+
+```bash
+code-scan index --root . --mode compact \
+  | jq 'reduce .f[] as $t ({}; (.[$t[0]] |= ((. // []) + [$t[3]])))
+        | with_entries(.value |= (map(select(. != "")) | unique | sort))'
+```
+
+Per-file function objects (name, line, kind, exported):
+
+```bash
+code-scan index --root . --mode compact \
+  | jq 'reduce .f[] as $t ({}; (.[$t[0]] |= ((. // []) + [{name:$t[3], line:$t[1], kind:$t[5], exported:($t[4]==1)}])))'
+```
+
+### Group by folder (built-in)
+
+```bash
+code-scan index --root . --mode folders
+```
+
+Example output:
+
+```json
+{
+  "ver": 1,
+  "stats": { "files": 6, "parsed": 6, "skipped": 0, "errors": 0 },
+  "folders": {
+    "services": {
+      "functions": 24,
+      "names": [
+        "calculateReadingTime",
+        "createBlogRegistry",
+        "createBlogRegistry.get",
+        "createRssResponse"
+      ]
+    }
+  }
+}
+```
+
+### Group by folder (from compact, with jq)
+
+Function names grouped by folder:
+
+```bash
+code-scan index --root . --mode compact \
+  | jq 'reduce .f[] as $t ({}; (
+          ($t[0] | split("/") | .[:-1] | join("/")) as $dir |
+          (.[$dir] |= ((. // []) + [$t[3]]))
+        ))
+        | with_entries(.value |= (map(select(. != "")) | unique | sort))'
+```
+
+Folder summary with counts and names:
+
+```bash
+code-scan index --root . --mode compact \
+  | jq 'reduce .f[] as $t ({ };
+        (
+          ($t[0] | split("/") | .[:-1] | join("/")) as $dir |
+          .[$dir] |= ((. // {functions: 0, names: []})
+            | .functions += 1
+            | .names += [$t[3]])
+        ))
+        | with_entries(.value.names |= (map(select(. != "")) | unique | sort))'
+```
 
 ## Compact format reference
 

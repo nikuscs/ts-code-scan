@@ -1,11 +1,10 @@
 use crate::index::{BindingKind, FileIndex, Violation};
+use std::collections::HashSet;
 
 pub trait Rule: Send + Sync {
     fn name(&self) -> &'static str;
     fn check(&self, index: &FileIndex) -> Option<Violation>;
 }
-
-// ── Rule registry ────────────────────────────────────────────────
 
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
     vec![
@@ -16,21 +15,16 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
 }
 
 pub fn run_rules(enabled: &[String], index: &mut FileIndex) {
-    let rules = all_rules();
-    let active: Vec<_> = if enabled.is_empty() {
-        rules
-    } else {
-        rules.into_iter().filter(|r| enabled.iter().any(|e| e == r.name())).collect()
-    };
+    let enabled_set: HashSet<&str> = enabled.iter().map(String::as_str).collect();
 
-    for rule in &active {
+    for rule in
+        all_rules().into_iter().filter(|r| enabled_set.is_empty() || enabled_set.contains(r.name()))
+    {
         if let Some(violation) = rule.check(index) {
             index.violations.push(violation);
         }
     }
 }
-
-// ── no_unused_bindings ───────────────────────────────────────────
 
 struct NoUnusedBindings;
 
@@ -56,8 +50,6 @@ impl Rule for NoUnusedBindings {
         Some(Violation { rule: self.name().to_string(), count: unused.len(), details: unused })
     }
 }
-
-// ── one_exported_function_per_file ───────────────────────────────
 
 struct OneExportedFunctionPerFile {
     path_prefix: Option<String>,
@@ -90,8 +82,6 @@ impl Rule for OneExportedFunctionPerFile {
     }
 }
 
-// ── max_functions_per_file ───────────────────────────────────────
-
 struct MaxFunctionsPerFile {
     max: usize,
 }
@@ -112,3 +102,7 @@ impl Rule for MaxFunctionsPerFile {
         Some(Violation { rule: self.name().to_string(), count, details: names })
     }
 }
+
+#[cfg(test)]
+#[path = "rules_test.rs"]
+mod tests;

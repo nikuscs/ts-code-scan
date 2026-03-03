@@ -4,6 +4,8 @@ use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 
 const DEFAULT_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
+const DEFAULT_EXCLUDE_DIRS: &[&str] =
+    &["node_modules", "dist", "build", ".next", ".git", "coverage", ".turbo", ".cache"];
 const DEFAULT_MAX_BYTES: u64 = 1_048_576; // 1 MB
 
 pub struct WalkConfig {
@@ -27,9 +29,8 @@ impl Default for WalkConfig {
 }
 
 pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
-    // Single-file mode
     if let Some(path) = &config.single_file {
-        return if path.exists() {
+        return if path.is_file() {
             Ok(vec![path.clone()])
         } else {
             anyhow::bail!("file not found: {}", path.display());
@@ -45,11 +46,17 @@ pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
     let mut builder = WalkBuilder::new(&config.root);
     builder.hidden(true).git_ignore(true).git_global(true);
 
-    // Add custom ignore patterns for excluded dirs
     let mut overrides = ignore::overrides::OverrideBuilder::new(&config.root);
-    for pattern in &config.exclude {
+    for pattern in DEFAULT_EXCLUDE_DIRS {
+        let pat = pattern.trim_matches('/');
         overrides
-            .add(&format!("!{pattern}/"))
+            .add(&format!("!**/{pat}/**"))
+            .with_context(|| format!("invalid default exclude pattern: {pattern}"))?;
+    }
+    for pattern in &config.exclude {
+        let pat = pattern.trim_matches('/');
+        overrides
+            .add(&format!("!**/{pat}/**"))
             .with_context(|| format!("invalid exclude pattern: {pattern}"))?;
     }
     let overrides = overrides.build().context("failed to build exclude overrides")?;
@@ -66,12 +73,10 @@ pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
 
         let path = entry.path();
 
-        // Check extension
         if !has_matching_extension(path, &extensions) {
             continue;
         }
 
-        // Check file size
         if let Ok(meta) = entry.metadata()
             && meta.len() > config.max_bytes
         {
@@ -82,7 +87,6 @@ pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
         files.push(path.to_path_buf());
     }
 
-    // Deterministic ordering
     files.sort();
     Ok(files)
 }
@@ -94,14 +98,5 @@ fn has_matching_extension(path: &Path, extensions: &[&str]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extension_matching() {
-        assert!(has_matching_extension(Path::new("foo.ts"), &["ts", "tsx"]));
-        assert!(has_matching_extension(Path::new("foo.TSX"), &["ts", "tsx"]));
-        assert!(!has_matching_extension(Path::new("foo.rs"), &["ts", "tsx"]));
-        assert!(!has_matching_extension(Path::new("foo"), &["ts", "tsx"]));
-    }
-}
+#[path = "walk_test.rs"]
+mod tests;

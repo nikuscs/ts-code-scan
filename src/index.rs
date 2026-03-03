@@ -1,7 +1,5 @@
 use serde::Serialize;
 
-// ── Function kinds ───────────────────────────────────────────────
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub enum FunctionKind {
     #[serde(rename = "fn")]
@@ -50,8 +48,6 @@ impl FunctionKind {
     }
 }
 
-// ── Binding kinds ────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BindingKind {
@@ -67,7 +63,21 @@ pub enum BindingKind {
     Enum,
 }
 
-// ── Function info ────────────────────────────────────────────────
+impl BindingKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Var => "var",
+            Self::Let => "let",
+            Self::Const => "const",
+            Self::Param => "param",
+            Self::Function => "fn",
+            Self::Class => "class",
+            Self::Import => "import",
+            Self::Catch => "catch",
+            Self::Enum => "enum",
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -82,8 +92,6 @@ pub struct FunctionInfo {
     pub line_end: u32,
 }
 
-// ── Binding info ─────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BindingInfo {
@@ -95,20 +103,15 @@ pub struct BindingInfo {
     pub col: u32,
 }
 
-// ── Export info ──────────────────────────────────────────────────
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ExportInfo {
     pub name: String,
     pub kind_code: u8,
 }
 
-// Export kind codes for compact mode
 pub const EXPORT_NAMED: u8 = 1;
 pub const EXPORT_DEFAULT: u8 = 2;
 pub const EXPORT_REEXPORT: u8 = 3;
-
-// ── Violation ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Violation {
@@ -116,8 +119,6 @@ pub struct Violation {
     pub count: usize,
     pub details: Vec<String>,
 }
-
-// ── Per-file index ───────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct FileIndex {
@@ -128,8 +129,6 @@ pub struct FileIndex {
     pub violations: Vec<Violation>,
     pub parse_errors: usize,
 }
-
-// ── Aggregate result ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Stats {
@@ -148,16 +147,20 @@ pub struct ScanResult {
     pub errors: Vec<String>,
 }
 
-// ── Output mode ──────────────────────────────────────────────────
-
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum OutputMode {
     #[default]
     Compact,
     Verbose,
+    /// Group by file: { files: { "file": [names...] } }
+    Files,
+    /// Group by folder: { folders: { "dir": { functions, names } } }
+    Folders,
 }
 
-// ── Function-kinds filter ────────────────────────────────────────
+#[cfg(test)]
+#[path = "index_test.rs"]
+mod tests;
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum FunctionKindsFilter {
@@ -192,8 +195,6 @@ impl FunctionKindsFilter {
         }
     }
 }
-
-// ── Line/column lookup ───────────────────────────────────────────
 
 pub struct LineIndex {
     line_starts: Vec<u32>,
