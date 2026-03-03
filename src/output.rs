@@ -2,7 +2,7 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use crate::index::{OutputMode, ScanResult, Stats};
+use crate::index::{FunctionInfo, OutputMode, ScanResult, Stats};
 
 pub fn write_result<W: Write>(
     result: &ScanResult,
@@ -246,54 +246,7 @@ impl From<&ScanResult> for FilesOutput {
     fn from(r: &ScanResult) -> Self {
         let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for fi in &r.file_indices {
-            // Collect named functions with spans
-            struct Named<'a> {
-                name: &'a str,
-                start: u32,
-                end: u32,
-            }
-            let named: Vec<Named> = fi
-                .functions
-                .iter()
-                .filter_map(|f| {
-                    f.name.as_deref().map(|n| Named { name: n, start: f.line, end: f.line_end })
-                })
-                .collect();
-
-            let mut out: Vec<String> = Vec::new();
-            for child in &named {
-                // find nearest enclosing parent (smallest span that still encloses)
-                let mut parent_name: Option<&str> = None;
-                let mut parent_span: Option<(u32, u32)> = None;
-                for cand in &named {
-                    if core::ptr::eq(cand, child) {
-                        continue;
-                    }
-                    if cand.start <= child.start && cand.end >= child.end {
-                        match parent_span {
-                            Some((ps, pe)) => {
-                                let cur_len = pe.saturating_sub(ps);
-                                let new_len = cand.end.saturating_sub(cand.start);
-                                if new_len < cur_len {
-                                    parent_span = Some((cand.start, cand.end));
-                                    parent_name = Some(cand.name);
-                                }
-                            }
-                            None => {
-                                parent_span = Some((cand.start, cand.end));
-                                parent_name = Some(cand.name);
-                            }
-                        }
-                    }
-                }
-                if let Some(p) = parent_name {
-                    out.push(format!("{}.{}", p, child.name));
-                } else {
-                    out.push(child.name.to_string());
-                }
-            }
-            out.sort();
-            out.dedup();
+            let out = compute_dot_names(&fi.functions);
             map.insert(fi.path.clone(), out);
         }
         Self { ver: r.ver, stats: r.stats.clone(), files: map }
@@ -321,20 +274,17 @@ impl From<&ScanResult> for FoldersOutput {
     fn from(r: &ScanResult) -> Self {
         let mut map: BTreeMap<String, FolderSummary> = BTreeMap::new();
         for fi in &r.file_indices {
-            let dir = std::path::Path::new(&fi.path)
-                .parent()
-                .map(|p| {
+            let dir = std::path::Path::new(&fi.path).parent().map_or_else(
+                || ".".to_string(),
+                |p| {
                     let s = p.to_string_lossy();
                     if s.is_empty() { ".".to_string() } else { s.to_string() }
-                })
-                .unwrap_or_else(|| ".".to_string());
+                },
+            );
             let entry = map.entry(dir).or_default();
             entry.functions += fi.functions.len();
-            for f in &fi.functions {
-                if let Some(name) = &f.name {
-                    entry.names.push(name.clone());
-                }
-            }
+            let dot_names = compute_dot_names(&fi.functions);
+            entry.names.extend(dot_names);
         }
         // Dedup and sort names for determinism
         for entry in map.values_mut() {
@@ -343,6 +293,55 @@ impl From<&ScanResult> for FoldersOutput {
         }
         Self { ver: r.ver, stats: r.stats.clone(), folders: map }
     }
+}
+
+// (duplicate helper removed)
+
+// Compute dot-notation names for a file's functions
+fn compute_dot_names(funcs: &[FunctionInfo]) -> Vec<String> {
+    struct Named<'a> {
+        name: &'a str,
+        start: u32,
+        end: u32,
+    }
+    let named: Vec<Named> = funcs
+        .iter()
+        .filter_map(|f| {
+            f.name.as_deref().map(|n| Named { name: n, start: f.line, end: f.line_end })
+        })
+        .collect();
+
+    let mut out: Vec<String> = Vec::new();
+    for (i, child) in named.iter().enumerate() {
+        let mut parent_name: Option<&str> = None;
+        let mut parent_span: Option<(u32, u32)> = None;
+        for (j, cand) in named.iter().enumerate() {
+            if i == j {
+                continue;
+            }
+            if cand.start <= child.start && cand.end >= child.end {
+                if let Some((ps, pe)) = parent_span {
+                    let cur_len = pe.saturating_sub(ps);
+                    let new_len = cand.end.saturating_sub(cand.start);
+                    if new_len < cur_len {
+                        parent_span = Some((cand.start, cand.end));
+                        parent_name = Some(cand.name);
+                    }
+                } else {
+                    parent_span = Some((cand.start, cand.end));
+                    parent_name = Some(cand.name);
+                }
+            }
+        }
+        if let Some(p) = parent_name {
+            out.push(format!("{}.{}", p, child.name));
+        } else {
+            out.push(child.name.to_string());
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 // ── Rules-only output ────────────────────────────────────────────
@@ -454,6 +453,50 @@ mod tests {
     }
 
     #[test]
+    fn folders_mode_uses_dot_names() {
+        let fi = FileIndex {
+            path: "dir/x.ts".into(),
+            functions: vec![
+                FunctionInfo {
+                    name: Some("builder".into()),
+                    kind: FunctionKind::Declaration,
+                    exported: false,
+                    is_async: false,
+                    is_generator: false,
+                    line: 1,
+                    col: 1,
+                    line_end: 50,
+                },
+                FunctionInfo {
+                    name: Some("get".into()),
+                    kind: FunctionKind::ObjectMethod,
+                    exported: false,
+                    is_async: false,
+                    is_generator: false,
+                    line: 10,
+                    col: 1,
+                    line_end: 20,
+                },
+            ],
+            bindings: vec![],
+            exports: vec![],
+            violations: vec![],
+            parse_errors: 0,
+        };
+        let r = ScanResult {
+            ver: 1,
+            root: ".".into(),
+            stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 },
+            file_indices: vec![fi],
+            errors: vec![],
+        };
+        let folders = FoldersOutput::from(&r);
+        let entry = folders.folders.get("dir").unwrap();
+        assert!(entry.names.contains(&"builder.get".to_string()));
+        assert!(entry.names.contains(&"builder".to_string()));
+    }
+
+    #[test]
     fn dot_names_for_nested_methods() {
         // Build a result with a parent function and a nested method
         let fi = FileIndex {
@@ -507,6 +550,93 @@ mod tests {
         assert!(names.contains(&"builder.get".to_string()));
         assert!(names.contains(&"builder".to_string()));
         assert!(names.contains(&"util".to_string()));
+    }
+
+    #[test]
+    fn write_result_emits_valid_json_all_modes() {
+        let fi = FileIndex {
+            path: "p.ts".into(),
+            functions: vec![
+                FunctionInfo {
+                    name: Some("parent".into()),
+                    kind: FunctionKind::Declaration,
+                    exported: true,
+                    is_async: false,
+                    is_generator: false,
+                    line: 1,
+                    col: 1,
+                    line_end: 50,
+                },
+                FunctionInfo {
+                    name: Some("child".into()),
+                    kind: FunctionKind::ObjectMethod,
+                    exported: false,
+                    is_async: false,
+                    is_generator: false,
+                    line: 10,
+                    col: 1,
+                    line_end: 20,
+                },
+            ],
+            bindings: vec![BindingInfo {
+                name: "x".into(),
+                kind: BindingKind::Const,
+                exported: false,
+                refs: 0,
+                line: 1,
+                col: 1,
+            }],
+            exports: vec![],
+            violations: vec![],
+            parse_errors: 0,
+        };
+        let r = ScanResult {
+            ver: 1,
+            root: ".".into(),
+            stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 },
+            file_indices: vec![fi],
+            errors: vec![],
+        };
+        for mode in
+            [OutputMode::Compact, OutputMode::Verbose, OutputMode::Files, OutputMode::Folders]
+        {
+            let mut buf = Vec::new();
+            write_result(&r, mode, &mut buf).unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+            assert!(v.get("ver").is_some());
+        }
+    }
+
+    #[test]
+    fn write_rules_result_emits_valid_json() {
+        let mut fi = FileIndex {
+            path: "a.ts".into(),
+            functions: vec![],
+            bindings: vec![],
+            exports: vec![],
+            violations: vec![],
+            parse_errors: 0,
+        };
+        fi.violations.push(crate::index::Violation {
+            rule: "demo".into(),
+            count: 1,
+            details: vec!["x".into()],
+        });
+        let r = ScanResult {
+            ver: 1,
+            root: ".".into(),
+            stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 },
+            file_indices: vec![fi],
+            errors: vec![],
+        };
+        for mode in
+            [OutputMode::Compact, OutputMode::Verbose, OutputMode::Files, OutputMode::Folders]
+        {
+            let mut buf = Vec::new();
+            super::write_rules_result(&r, mode, &mut buf).unwrap();
+            let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
+            assert!(v.get("ver").is_some());
+        }
     }
 }
 

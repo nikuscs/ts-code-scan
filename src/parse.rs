@@ -68,11 +68,11 @@ mod tests {
         let file = root.join("a.ts");
         fs::write(
             &file,
-            r#"
+            r"
             export function foo() {}
             export const bar = () => {};
             class C { get x(){ return 1 } }
-        "#,
+        ",
         )
         .unwrap();
 
@@ -83,5 +83,17 @@ mod tests {
         assert!(names.contains(&"foo".to_string()));
         assert!(names.contains(&"bar".to_string()));
         assert!(fi.parse_errors == 0);
+    }
+
+    #[test]
+    fn unsupported_extension_errors() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let file = root.join("a.unknownext");
+        fs::write(&file, "let x = 1;\n").unwrap();
+        let root_canon = root.canonicalize().unwrap();
+        let err = process_file(&file, &root_canon, FunctionKindsFilter::All).unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("unsupported file type"));
     }
 }

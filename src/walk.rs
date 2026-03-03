@@ -172,4 +172,17 @@ mod tests {
             collect_files(&WalkConfig { root: dir.path().into(), ..Default::default() }).unwrap();
         assert!(!files.iter().any(|p| p.to_string_lossy().contains("node_modules")));
     }
+
+    #[test]
+    fn invalid_exclude_pattern_errors() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        // Pattern with unmatched '[' should fail in override builder
+        let res = collect_files(&WalkConfig {
+            root: dir.path().into(),
+            exclude: vec!["foo[".into()],
+            ..Default::default()
+        });
+        assert!(res.is_err());
+    }
 }
