@@ -37,7 +37,7 @@ jobs:
         with:
           toolchain: stable
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+      - uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
@@ -146,7 +146,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Cache
-        uses: Swatinem/rust-cache@ad397744b0d591a723ab90405b7247fac0e6b8db # v2
+        uses: Swatinem/rust-cache@779680da715d629ac1d338a641029a2f4372abb5 # v2
         with:
           key: release-${{ matrix.target }}
 
