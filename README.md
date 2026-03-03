@@ -4,9 +4,9 @@
 ![Release](https://img.shields.io/github/v/release/nikuscs/ts-code-scan)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
-**Fast Rust CLI that indexes TypeScript/JavaScript codebases for AI agents.**
+Fast, single-binary Rust CLI that indexes TypeScript/JavaScript codebases for AI and automation. It walks your project, parses files in parallel, and returns a deterministic JSON index so tools can understand a repo’s structure instantly.
 
-Give any AI agent a compact overview of all functions, bindings, exports, and lint violations across an entire TS/JS project in under a second. Outputs stable JSON in compact (tuple arrays, token-friendly) or verbose (full objects) mode.
+The index includes functions, bindings with reference counts, exports, and optional rule violations. Output is available as compact tuple arrays (token-friendly for LLMs) or verbose objects (human-readable) — ideal for AI assistants, code review automation, repo analytics, and refactoring planning.
 
 ## Quick start
 
@@ -232,4 +232,4 @@ Full objects with spans:
 
 ## License
 
-MIT
+MIT — see `LICENSE`.
