@@ -54,3 +54,30 @@ pub fn process_file(path: &Path, root: &Path, filter: FunctionKindsFilter) -> Re
         parse_errors,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn parses_basic_ts_and_sets_relative_path() {
+        let dir = tempdir().unwrap();
+        let root = dir.path();
+        let file = root.join("a.ts");
+        fs::write(&file, r#"
+            export function foo() {}
+            export const bar = () => {};
+            class C { get x(){ return 1 } }
+        "#).unwrap();
+
+        let root_canon = root.canonicalize().unwrap();
+        let fi = process_file(&file, &root_canon, FunctionKindsFilter::All).unwrap();
+        assert_eq!(fi.path, "a.ts");
+        let names: Vec<_> = fi.functions.iter().filter_map(|f| f.name.clone()).collect();
+        assert!(names.contains(&"foo".to_string()));
+        assert!(names.contains(&"bar".to_string()));
+        assert!(fi.parse_errors == 0);
+    }
+}

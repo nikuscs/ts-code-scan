@@ -2,7 +2,7 @@ use std::io::Write;
 
 use serde::Serialize;
 
-use crate::index::{OutputMode, ScanResult};
+use crate::index::{OutputMode, ScanResult, Stats};
 
 pub fn write_result<W: Write>(
     result: &ScanResult,
@@ -18,6 +18,14 @@ pub fn write_result<W: Write>(
             let verbose = VerboseOutput::from(result);
             serde_json::to_writer_pretty(w, &verbose)?;
         }
+        OutputMode::Files => {
+            let files = FilesOutput::from(result);
+            serde_json::to_writer_pretty(w, &files)?;
+        }
+        OutputMode::Folders => {
+            let folders = FoldersOutput::from(result);
+            serde_json::to_writer_pretty(w, &folders)?;
+        }
     }
     Ok(())
 }
@@ -28,7 +36,7 @@ pub fn write_result<W: Write>(
 #[derive(Serialize)]
 struct CompactOutput {
     ver: u8,
-    stats: CompactStats,
+    stats: Stats,
     /// Functions: [file, line, col, name, exported(0/1), kind]
     f: Vec<(String, u32, u32, String, u8, String)>,
     /// Bindings: [file, line, col, name, kind, refs]
@@ -42,13 +50,7 @@ struct CompactOutput {
     err: Vec<String>,
 }
 
-#[derive(Serialize)]
-struct CompactStats {
-    files: usize,
-    parsed: usize,
-    skipped: usize,
-    errors: usize,
-}
+// use shared Stats from index
 
 impl From<&ScanResult> for CompactOutput {
     fn from(r: &ScanResult) -> Self {
@@ -91,12 +93,7 @@ impl From<&ScanResult> for CompactOutput {
 
         Self {
             ver: r.ver,
-            stats: CompactStats {
-                files: r.stats.files,
-                parsed: r.stats.parsed,
-                skipped: r.stats.skipped,
-                errors: r.stats.errors,
-            },
+            stats: r.stats.clone(),
             f,
             b,
             x,
@@ -113,7 +110,7 @@ impl From<&ScanResult> for CompactOutput {
 struct VerboseOutput {
     ver: u8,
     root: String,
-    stats: VerboseStats,
+    stats: Stats,
     functions: Vec<VerboseFunction>,
     bindings: Vec<VerboseBinding>,
     exports: Vec<VerboseExport>,
@@ -123,13 +120,7 @@ struct VerboseOutput {
     errors: Vec<String>,
 }
 
-#[derive(Serialize)]
-struct VerboseStats {
-    files: usize,
-    parsed: usize,
-    skipped: usize,
-    errors: usize,
-}
+// use shared Stats from index
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -237,12 +228,7 @@ impl From<&ScanResult> for VerboseOutput {
         Self {
             ver: r.ver,
             root: r.root.clone(),
-            stats: VerboseStats {
-                files: r.stats.files,
-                parsed: r.stats.parsed,
-                skipped: r.stats.skipped,
-                errors: r.stats.errors,
-            },
+            stats: r.stats.clone(),
             functions,
             bindings,
             exports,
@@ -252,7 +238,178 @@ impl From<&ScanResult> for VerboseOutput {
     }
 }
 
+// ── Files (grouped) output ───────────────────────────────────────
+
+use std::collections::BTreeMap;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FilesOutput {
+    ver: u8,
+    stats: Stats,
+    files: BTreeMap<String, Vec<String>>,
+}
+
+impl From<&ScanResult> for FilesOutput {
+    fn from(r: &ScanResult) -> Self {
+        let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for fi in &r.file_indices {
+            // Collect named functions with spans
+            struct Named<'a> { name: &'a str, start: u32, end: u32 }
+            let named: Vec<Named> = fi.functions.iter()
+                .filter_map(|f| f.name.as_deref().map(|n| Named { name: n, start: f.line, end: f.line_end }))
+                .collect();
+
+            let mut out: Vec<String> = Vec::new();
+            for child in &named {
+                // find nearest enclosing parent (smallest span that still encloses)
+                let mut parent_name: Option<&str> = None;
+                let mut parent_span: Option<(u32,u32)> = None;
+                for cand in &named {
+                    if core::ptr::eq(cand, child) { continue; }
+                    if cand.start <= child.start && cand.end >= child.end {
+                        match parent_span {
+                            Some((ps,pe)) => {
+                                let cur_len = pe.saturating_sub(ps);
+                                let new_len = cand.end.saturating_sub(cand.start);
+                                if new_len < cur_len { parent_span = Some((cand.start,cand.end)); parent_name = Some(cand.name); }
+                            }
+                            None => { parent_span = Some((cand.start,cand.end)); parent_name = Some(cand.name); }
+                        }
+                    }
+                }
+                if let Some(p) = parent_name { out.push(format!("{}.{}", p, child.name)); } else { out.push(child.name.to_string()); }
+            }
+            out.sort();
+            out.dedup();
+            map.insert(fi.path.clone(), out);
+        }
+        Self { ver: r.ver, stats: r.stats.clone(), files: map }
+    }
+}
+
+// ── Folders (grouped) output ─────────────────────────────────────
+
+#[derive(Serialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct FolderSummary {
+    functions: usize,
+    names: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FoldersOutput {
+    ver: u8,
+    stats: Stats,
+    folders: BTreeMap<String, FolderSummary>,
+}
+
+impl From<&ScanResult> for FoldersOutput {
+    fn from(r: &ScanResult) -> Self {
+        let mut map: BTreeMap<String, FolderSummary> = BTreeMap::new();
+        for fi in &r.file_indices {
+            let dir = std::path::Path::new(&fi.path)
+                .parent()
+                .map(|p| {
+                    let s = p.to_string_lossy();
+                    if s.is_empty() { ".".to_string() } else { s.to_string() }
+                })
+                .unwrap_or_else(|| ".".to_string());
+            let entry = map.entry(dir).or_default();
+            entry.functions += fi.functions.len();
+            for f in &fi.functions {
+                if let Some(name) = &f.name {
+                    entry.names.push(name.clone());
+                }
+            }
+        }
+        // Dedup and sort names for determinism
+        for entry in map.values_mut() {
+            entry.names.sort();
+            entry.names.dedup();
+        }
+        Self { ver: r.ver, stats: r.stats.clone(), folders: map }
+    }
+}
+
 // ── Rules-only output ────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::{BindingInfo, BindingKind, FileIndex, FunctionInfo, FunctionKind, ScanResult, Stats};
+
+    fn scan_result_example() -> ScanResult {
+        let fi1 = FileIndex {
+            path: "dir/a.ts".to_string(),
+            functions: vec![
+                FunctionInfo { name: Some("foo".into()), kind: FunctionKind::Declaration, exported: true, is_async: false, is_generator: false, line: 1, col: 1, line_end: 1 },
+                FunctionInfo { name: None, kind: FunctionKind::Arrow, exported: false, is_async: false, is_generator: false, line: 2, col: 1, line_end: 2 },
+                FunctionInfo { name: Some("foo".into()), kind: FunctionKind::Declaration, exported: true, is_async: false, is_generator: false, line: 3, col: 1, line_end: 3 },
+            ],
+            bindings: vec![BindingInfo { name: "x".into(), kind: BindingKind::Const, exported: false, refs: 0, line: 1, col: 1 }],
+            exports: vec![],
+            violations: vec![],
+            parse_errors: 0,
+        };
+        let fi2 = FileIndex {
+            path: "b.ts".to_string(),
+            functions: vec![FunctionInfo { name: Some("bar".into()), kind: FunctionKind::Declaration, exported: false, is_async: false, is_generator: false, line: 1, col: 1, line_end: 1 }],
+            bindings: vec![],
+            exports: vec![],
+            violations: vec![],
+            parse_errors: 0,
+        };
+        ScanResult { ver: 1, root: ".".into(), stats: Stats { files: 2, parsed: 2, skipped: 0, errors: 0 }, file_indices: vec![fi1, fi2], errors: vec![] }
+    }
+
+    #[test]
+    fn files_mode_groups_named_functions() {
+        let r = scan_result_example();
+        let files = FilesOutput::from(&r);
+
+        assert_eq!(files.ver, 1);
+        assert_eq!(files.stats.parsed, 2);
+        // dot-notation when nested: still only foo here (no nested in example)
+        assert_eq!(files.files.get("dir/a.ts").unwrap(), &vec!["foo".to_string()]);
+        assert_eq!(files.files.get("b.ts").unwrap(), &vec!["bar".to_string()]);
+    }
+
+    #[test]
+    fn folders_mode_summarizes_by_parent_dir() {
+        let r = scan_result_example();
+        let folders = FoldersOutput::from(&r);
+
+        let dir = folders.folders.get("dir").unwrap();
+        assert_eq!(dir.functions, 3);
+        assert_eq!(dir.names, vec!["foo".to_string()]);
+
+        let root_dir = folders.folders.get(".").unwrap();
+        assert_eq!(root_dir.functions, 1);
+        assert_eq!(root_dir.names, vec!["bar".to_string()]);
+    }
+
+    #[test]
+    fn dot_names_for_nested_methods() {
+        // Build a result with a parent function and a nested method
+        let fi = FileIndex {
+            path: "x.ts".into(),
+            functions: vec![
+                FunctionInfo { name: Some("builder".into()), kind: FunctionKind::Declaration, exported: false, is_async: false, is_generator: false, line: 1, col: 1, line_end: 100 },
+                FunctionInfo { name: Some("get".into()), kind: FunctionKind::ObjectMethod, exported: false, is_async: false, is_generator: false, line: 10, col: 1, line_end: 20 },
+                FunctionInfo { name: Some("util".into()), kind: FunctionKind::Declaration, exported: false, is_async: false, is_generator: false, line: 150, col: 1, line_end: 160 },
+            ],
+            bindings: vec![], exports: vec![], violations: vec![], parse_errors: 0,
+        };
+        let r = ScanResult { ver: 1, root: ".".into(), stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 }, file_indices: vec![fi], errors: vec![] };
+        let files = FilesOutput::from(&r);
+        let names = files.files.get("x.ts").unwrap();
+        assert!(names.contains(&"builder.get".to_string()));
+        assert!(names.contains(&"builder".to_string()));
+        assert!(names.contains(&"util".to_string()));
+    }
+}
 
 pub fn write_rules_result<W: Write>(
     result: &ScanResult,
@@ -264,7 +421,7 @@ pub fn write_rules_result<W: Write>(
             let compact = CompactRulesOutput::from(result);
             serde_json::to_writer(w, &compact)?;
         }
-        OutputMode::Verbose => {
+        OutputMode::Verbose | OutputMode::Files | OutputMode::Folders => {
             let verbose = VerboseRulesOutput::from(result);
             serde_json::to_writer_pretty(w, &verbose)?;
         }
@@ -275,7 +432,7 @@ pub fn write_rules_result<W: Write>(
 #[derive(Serialize)]
 struct CompactRulesOutput {
     ver: u8,
-    stats: CompactStats,
+    stats: Stats,
     viol: Vec<(String, String, usize, Vec<String>)>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     err: Vec<String>,
@@ -289,17 +446,7 @@ impl From<&ScanResult> for CompactRulesOutput {
                 viol.push((fi.path.clone(), v.rule.clone(), v.count, v.details.clone()));
             }
         }
-        Self {
-            ver: r.ver,
-            stats: CompactStats {
-                files: r.stats.files,
-                parsed: r.stats.parsed,
-                skipped: r.stats.skipped,
-                errors: r.stats.errors,
-            },
-            viol,
-            err: r.errors.clone(),
-        }
+        Self { ver: r.ver, stats: r.stats.clone(), viol, err: r.errors.clone() }
     }
 }
 
@@ -307,7 +454,7 @@ impl From<&ScanResult> for CompactRulesOutput {
 #[serde(rename_all = "camelCase")]
 struct VerboseRulesOutput {
     ver: u8,
-    stats: VerboseStats,
+    stats: Stats,
     violations: Vec<VerboseViolation>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     errors: Vec<String>,
@@ -326,16 +473,6 @@ impl From<&ScanResult> for VerboseRulesOutput {
                 });
             }
         }
-        Self {
-            ver: r.ver,
-            stats: VerboseStats {
-                files: r.stats.files,
-                parsed: r.stats.parsed,
-                skipped: r.stats.skipped,
-                errors: r.stats.errors,
-            },
-            violations,
-            errors: r.errors.clone(),
-        }
+        Self { ver: r.ver, stats: r.stats.clone(), violations, errors: r.errors.clone() }
     }
 }

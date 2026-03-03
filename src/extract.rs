@@ -351,3 +351,25 @@ pub fn extract_param_names(params: &FormalParameters<'_>) -> Vec<String> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oxc::allocator::Allocator;
+    use oxc::parser::{ParseOptions, Parser};
+    use oxc::span::SourceType;
+
+    #[test]
+    fn param_extraction_variants() {
+        let allocator = Allocator::default();
+        let src = "function f(a,{b},[c], d = 1){}";
+        let st = SourceType::default().with_module(false).with_script(true);
+        let ret = Parser::new(&allocator, src, st).with_options(ParseOptions::default()).parse();
+        if let oxc::ast::ast::Statement::FunctionDeclaration(fd) = &ret.program.body[0] {
+            let names = extract_param_names(&fd.params);
+            assert_eq!(names, vec!["a", "{...}", "[...]", "d"]);
+        } else {
+            panic!("unexpected AST");
+        }
+    }
+}

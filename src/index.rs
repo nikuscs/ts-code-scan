@@ -155,6 +155,27 @@ pub enum OutputMode {
     #[default]
     Compact,
     Verbose,
+    /// Group by file: { files: { "file": [names...] } }
+    Files,
+    /// Group by folder: { folders: { "dir": { functions, names } } }
+    Folders,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn function_kinds_filter_includes_variants() {
+        assert!(FunctionKindsFilter::All.includes(FunctionKind::Getter));
+        assert!(FunctionKindsFilter::Top.includes(FunctionKind::Declaration));
+        assert!(!FunctionKindsFilter::Top.includes(FunctionKind::Arrow));
+        assert!(FunctionKindsFilter::TopArrow.includes(FunctionKind::Arrow));
+        assert!(!FunctionKindsFilter::TopArrow.includes(FunctionKind::ClassMethod));
+        assert!(FunctionKindsFilter::TopArrowClass.includes(FunctionKind::Constructor));
+        assert!(FunctionKindsFilter::TopArrowClass.includes(FunctionKind::Getter));
+        assert!(FunctionKindsFilter::TopArrowClass.includes(FunctionKind::Setter));
+    }
 }
 
 // ── Function-kinds filter ────────────────────────────────────────

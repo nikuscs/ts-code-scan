@@ -102,6 +102,87 @@ code-scan index --root . --function-kinds top+arrow
 code-scan index --root . --include ts,tsx
 ```
 
+### Built-in groupings (LLM-friendly)
+
+```bash
+# Per-file function names
+code-scan index --root ./my-project --mode files
+
+# Per-folder summary (function count + names)
+code-scan index --root ./my-project --mode folders
+```
+
+The `files` and `folders` modes emit pre-grouped JSON to avoid extra tooling.
+
+- Dot notation: nested functions are prefixed with their nearest enclosing named function, e.g. `createBlogRegistry.get`.
+
+Example (files mode):
+
+```json
+{
+  "ver": 1,
+  "stats": { "files": 6, "parsed": 6, "skipped": 0, "errors": 0 },
+  "files": {
+    "services/blog.service.ts": [
+      "calculateReadingTime",
+      "createBlogRegistry",
+      "createBlogRegistry.get",
+      "createBlogRegistry.getAllPosts"
+    ],
+    "services/rss.service.ts": ["createRssResponse", "createRssXml"]
+  }
+}
+```
+
+### Group by file (with jq)
+
+Get a per-file list of function names (compact mode):
+
+```bash
+code-scan index --root ./my-project --mode compact \
+  | jq 'reduce .f[] as $t ({}; (.[$t[0]] |= ((. // []) + [$t[3]])))
+        | with_entries(.value |= (map(select(. != "")) | unique | sort))'
+```
+
+### Group by folder (with jq)
+
+Per-folder function names:
+
+```bash
+code-scan index --root ./my-project --mode compact \
+  | jq 'reduce .f[] as $t ({}; (
+          ($t[0] | split("/") | .[:-1] | join("/")) as $dir |
+          (.[$dir] |= ((. // []) + [$t[3]]))
+        ))
+        | with_entries(.value |= (map(select(. != "")) | unique | sort))'
+```
+
+Per-folder summary with counts and names:
+
+```bash
+code-scan index --root ./my-project --mode compact \
+  | jq 'reduce .f[] as $t ({ };
+        (
+          ($t[0] | split("/") | .[:-1] | join("/")) as $dir |
+          .[$dir] |= ((. // {functions: 0, names: []})
+            | .functions += 1
+            | .names += [$t[3]])
+        ))
+        | with_entries(.value.names |= (map(select(. != "")) | unique | sort))'
+```
+
+Or, include metadata (name, line, kind, exported):
+
+```bash
+# Compact
+code-scan index --root ./my-project --mode compact \
+  | jq 'reduce .f[] as $t ({}; (.[$t[0]] |= ((. // []) + [{name:$t[3], line:$t[1], kind:$t[5], exported:($t[4]==1)}])))'
+
+# Verbose
+code-scan index --root ./my-project --mode verbose \
+  | jq 'reduce .functions[] as $f ({}; (.[$f.file] |= ((. // []) + [{name:$f.name, line:$f.span.start.line, kind:$f.kind, exported:$f.exported}])))'
+```
+
 ### Run rules
 
 ```bash
@@ -164,7 +245,7 @@ Full objects with spans:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--root` | `.` | Project root directory |
-| `--mode` | `compact` | Output mode: `compact` or `verbose` |
+| `--mode` | `compact` | Output mode: `compact`, `verbose`, `files`, or `folders` |
 | `--include` | all | File extensions to include (comma-separated) |
 | `--exclude` | | Patterns to exclude (comma-separated) |
 | `--max-bytes-per-file` | `1048576` | Skip files larger than N bytes |
