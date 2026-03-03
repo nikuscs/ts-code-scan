@@ -1,6 +1,6 @@
 # 🔍 code-scan
 
-![CI](https://github.com/nikuscs/ts-code-scan/actions/workflows/ci.yml/badge.svg)
+![CI](https://img.shields.io/github/actions/workflow/status/nikuscs/ts-code-scan/ci.yml?branch=main&label=CI)
 ![Release](https://img.shields.io/github/v/release/nikuscs/ts-code-scan)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 
