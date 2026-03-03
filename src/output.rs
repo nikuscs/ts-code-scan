@@ -30,9 +30,6 @@ pub fn write_result<W: Write>(
     Ok(())
 }
 
-// ── Compact output ───────────────────────────────────────────────
-// Tuple arrays for token efficiency
-
 #[derive(Serialize)]
 struct CompactOutput {
     ver: u8,
@@ -50,14 +47,17 @@ struct CompactOutput {
     err: Vec<String>,
 }
 
-// use shared Stats from index
-
 impl From<&ScanResult> for CompactOutput {
     fn from(r: &ScanResult) -> Self {
-        let mut f = Vec::new();
-        let mut b = Vec::new();
-        let mut x = Vec::new();
-        let mut viol = Vec::new();
+        let total_functions = r.file_indices.iter().map(|fi| fi.functions.len()).sum();
+        let total_bindings = r.file_indices.iter().map(|fi| fi.bindings.len()).sum();
+        let total_exports = r.file_indices.iter().map(|fi| fi.exports.len()).sum();
+        let total_violations = r.file_indices.iter().map(|fi| fi.violations.len()).sum();
+
+        let mut f = Vec::with_capacity(total_functions);
+        let mut b = Vec::with_capacity(total_bindings);
+        let mut x = Vec::with_capacity(total_exports);
+        let mut viol = Vec::with_capacity(total_violations);
 
         for fi in &r.file_indices {
             for func in &fi.functions {
@@ -76,10 +76,7 @@ impl From<&ScanResult> for CompactOutput {
                     binding.line,
                     binding.col,
                     binding.name.clone(),
-                    serde_json::to_value(binding.kind)
-                        .ok()
-                        .and_then(|v| v.as_str().map(String::from))
-                        .unwrap_or_default(),
+                    binding.kind.as_str().to_string(),
                     binding.refs,
                 ));
             }
@@ -95,8 +92,6 @@ impl From<&ScanResult> for CompactOutput {
     }
 }
 
-// ── Verbose output ───────────────────────────────────────────────
-
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct VerboseOutput {
@@ -111,8 +106,6 @@ struct VerboseOutput {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     errors: Vec<String>,
 }
-
-// use shared Stats from index
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,10 +160,15 @@ struct VerboseViolation {
 
 impl From<&ScanResult> for VerboseOutput {
     fn from(r: &ScanResult) -> Self {
-        let mut functions = Vec::new();
-        let mut bindings = Vec::new();
-        let mut exports = Vec::new();
-        let mut violations = Vec::new();
+        let total_functions = r.file_indices.iter().map(|fi| fi.functions.len()).sum();
+        let total_bindings = r.file_indices.iter().map(|fi| fi.bindings.len()).sum();
+        let total_exports = r.file_indices.iter().map(|fi| fi.exports.len()).sum();
+        let total_violations = r.file_indices.iter().map(|fi| fi.violations.len()).sum();
+
+        let mut functions = Vec::with_capacity(total_functions);
+        let mut bindings = Vec::with_capacity(total_bindings);
+        let mut exports = Vec::with_capacity(total_exports);
+        let mut violations = Vec::with_capacity(total_violations);
 
         for fi in &r.file_indices {
             for func in &fi.functions {
@@ -191,10 +189,7 @@ impl From<&ScanResult> for VerboseOutput {
                 bindings.push(VerboseBinding {
                     file: fi.path.clone(),
                     name: binding.name.clone(),
-                    kind: serde_json::to_value(binding.kind)
-                        .ok()
-                        .and_then(|v| v.as_str().map(String::from))
-                        .unwrap_or_default(),
+                    kind: binding.kind.as_str().to_string(),
                     exported: binding.exported,
                     refs: binding.refs,
                     decl: VerbosePos { line: binding.line, col: binding.col },
@@ -230,8 +225,6 @@ impl From<&ScanResult> for VerboseOutput {
     }
 }
 
-// ── Files (grouped) output ───────────────────────────────────────
-
 use std::collections::BTreeMap;
 
 #[derive(Serialize)]
@@ -252,8 +245,6 @@ impl From<&ScanResult> for FilesOutput {
         Self { ver: r.ver, stats: r.stats.clone(), files: map }
     }
 }
-
-// ── Folders (grouped) output ─────────────────────────────────────
 
 #[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -286,7 +277,6 @@ impl From<&ScanResult> for FoldersOutput {
             let dot_names = compute_dot_names(&fi.functions);
             entry.names.extend(dot_names);
         }
-        // Dedup and sort names for determinism
         for entry in map.values_mut() {
             entry.names.sort();
             entry.names.dedup();
@@ -295,9 +285,6 @@ impl From<&ScanResult> for FoldersOutput {
     }
 }
 
-// (duplicate helper removed)
-
-// Compute dot-notation names for a file's functions
 fn compute_dot_names(funcs: &[FunctionInfo]) -> Vec<String> {
     struct Named<'a> {
         name: &'a str,
@@ -311,7 +298,7 @@ fn compute_dot_names(funcs: &[FunctionInfo]) -> Vec<String> {
         })
         .collect();
 
-    let mut out: Vec<String> = Vec::new();
+    let mut out: Vec<String> = Vec::with_capacity(named.len());
     for (i, child) in named.iter().enumerate() {
         let mut parent_name: Option<&str> = None;
         let mut parent_span: Option<(u32, u32)> = None;
@@ -344,301 +331,9 @@ fn compute_dot_names(funcs: &[FunctionInfo]) -> Vec<String> {
     out
 }
 
-// ── Rules-only output ────────────────────────────────────────────
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::index::{
-        BindingInfo, BindingKind, FileIndex, FunctionInfo, FunctionKind, ScanResult, Stats,
-    };
-
-    fn scan_result_example() -> ScanResult {
-        let fi1 = FileIndex {
-            path: "dir/a.ts".to_string(),
-            functions: vec![
-                FunctionInfo {
-                    name: Some("foo".into()),
-                    kind: FunctionKind::Declaration,
-                    exported: true,
-                    is_async: false,
-                    is_generator: false,
-                    line: 1,
-                    col: 1,
-                    line_end: 1,
-                },
-                FunctionInfo {
-                    name: None,
-                    kind: FunctionKind::Arrow,
-                    exported: false,
-                    is_async: false,
-                    is_generator: false,
-                    line: 2,
-                    col: 1,
-                    line_end: 2,
-                },
-                FunctionInfo {
-                    name: Some("foo".into()),
-                    kind: FunctionKind::Declaration,
-                    exported: true,
-                    is_async: false,
-                    is_generator: false,
-                    line: 3,
-                    col: 1,
-                    line_end: 3,
-                },
-            ],
-            bindings: vec![BindingInfo {
-                name: "x".into(),
-                kind: BindingKind::Const,
-                exported: false,
-                refs: 0,
-                line: 1,
-                col: 1,
-            }],
-            exports: vec![],
-            violations: vec![],
-            parse_errors: 0,
-        };
-        let fi2 = FileIndex {
-            path: "b.ts".to_string(),
-            functions: vec![FunctionInfo {
-                name: Some("bar".into()),
-                kind: FunctionKind::Declaration,
-                exported: false,
-                is_async: false,
-                is_generator: false,
-                line: 1,
-                col: 1,
-                line_end: 1,
-            }],
-            bindings: vec![],
-            exports: vec![],
-            violations: vec![],
-            parse_errors: 0,
-        };
-        ScanResult {
-            ver: 1,
-            root: ".".into(),
-            stats: Stats { files: 2, parsed: 2, skipped: 0, errors: 0 },
-            file_indices: vec![fi1, fi2],
-            errors: vec![],
-        }
-    }
-
-    #[test]
-    fn files_mode_groups_named_functions() {
-        let r = scan_result_example();
-        let files = FilesOutput::from(&r);
-
-        assert_eq!(files.ver, 1);
-        assert_eq!(files.stats.parsed, 2);
-        // dot-notation when nested: still only foo here (no nested in example)
-        assert_eq!(files.files.get("dir/a.ts").unwrap(), &vec!["foo".to_string()]);
-        assert_eq!(files.files.get("b.ts").unwrap(), &vec!["bar".to_string()]);
-    }
-
-    #[test]
-    fn folders_mode_summarizes_by_parent_dir() {
-        let r = scan_result_example();
-        let folders = FoldersOutput::from(&r);
-
-        let dir = folders.folders.get("dir").unwrap();
-        assert_eq!(dir.functions, 3);
-        assert_eq!(dir.names, vec!["foo".to_string()]);
-
-        let root_dir = folders.folders.get(".").unwrap();
-        assert_eq!(root_dir.functions, 1);
-        assert_eq!(root_dir.names, vec!["bar".to_string()]);
-    }
-
-    #[test]
-    fn folders_mode_uses_dot_names() {
-        let fi = FileIndex {
-            path: "dir/x.ts".into(),
-            functions: vec![
-                FunctionInfo {
-                    name: Some("builder".into()),
-                    kind: FunctionKind::Declaration,
-                    exported: false,
-                    is_async: false,
-                    is_generator: false,
-                    line: 1,
-                    col: 1,
-                    line_end: 50,
-                },
-                FunctionInfo {
-                    name: Some("get".into()),
-                    kind: FunctionKind::ObjectMethod,
-                    exported: false,
-                    is_async: false,
-                    is_generator: false,
-                    line: 10,
-                    col: 1,
-                    line_end: 20,
-                },
-            ],
-            bindings: vec![],
-            exports: vec![],
-            violations: vec![],
-            parse_errors: 0,
-        };
-        let r = ScanResult {
-            ver: 1,
-            root: ".".into(),
-            stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 },
-            file_indices: vec![fi],
-            errors: vec![],
-        };
-        let folders = FoldersOutput::from(&r);
-        let entry = folders.folders.get("dir").unwrap();
-        assert!(entry.names.contains(&"builder.get".to_string()));
-        assert!(entry.names.contains(&"builder".to_string()));
-    }
-
-    #[test]
-    fn dot_names_for_nested_methods() {
-        // Build a result with a parent function and a nested method
-        let fi = FileIndex {
-            path: "x.ts".into(),
-            functions: vec![
-                FunctionInfo {
-                    name: Some("builder".into()),
-                    kind: FunctionKind::Declaration,
-                    exported: false,
-                    is_async: false,
-                    is_generator: false,
-                    line: 1,
-                    col: 1,
-                    line_end: 100,
-                },
-                FunctionInfo {
-                    name: Some("get".into()),
-                    kind: FunctionKind::ObjectMethod,
-                    exported: false,
-                    is_async: false,
-                    is_generator: false,
-                    line: 10,
-                    col: 1,
-                    line_end: 20,
-                },
-                FunctionInfo {
-                    name: Some("util".into()),
-                    kind: FunctionKind::Declaration,
-                    exported: false,
-                    is_async: false,
-                    is_generator: false,
-                    line: 150,
-                    col: 1,
-                    line_end: 160,
-                },
-            ],
-            bindings: vec![],
-            exports: vec![],
-            violations: vec![],
-            parse_errors: 0,
-        };
-        let r = ScanResult {
-            ver: 1,
-            root: ".".into(),
-            stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 },
-            file_indices: vec![fi],
-            errors: vec![],
-        };
-        let files = FilesOutput::from(&r);
-        let names = files.files.get("x.ts").unwrap();
-        assert!(names.contains(&"builder.get".to_string()));
-        assert!(names.contains(&"builder".to_string()));
-        assert!(names.contains(&"util".to_string()));
-    }
-
-    #[test]
-    fn write_result_emits_valid_json_all_modes() {
-        let fi = FileIndex {
-            path: "p.ts".into(),
-            functions: vec![
-                FunctionInfo {
-                    name: Some("parent".into()),
-                    kind: FunctionKind::Declaration,
-                    exported: true,
-                    is_async: false,
-                    is_generator: false,
-                    line: 1,
-                    col: 1,
-                    line_end: 50,
-                },
-                FunctionInfo {
-                    name: Some("child".into()),
-                    kind: FunctionKind::ObjectMethod,
-                    exported: false,
-                    is_async: false,
-                    is_generator: false,
-                    line: 10,
-                    col: 1,
-                    line_end: 20,
-                },
-            ],
-            bindings: vec![BindingInfo {
-                name: "x".into(),
-                kind: BindingKind::Const,
-                exported: false,
-                refs: 0,
-                line: 1,
-                col: 1,
-            }],
-            exports: vec![],
-            violations: vec![],
-            parse_errors: 0,
-        };
-        let r = ScanResult {
-            ver: 1,
-            root: ".".into(),
-            stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 },
-            file_indices: vec![fi],
-            errors: vec![],
-        };
-        for mode in
-            [OutputMode::Compact, OutputMode::Verbose, OutputMode::Files, OutputMode::Folders]
-        {
-            let mut buf = Vec::new();
-            write_result(&r, mode, &mut buf).unwrap();
-            let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
-            assert!(v.get("ver").is_some());
-        }
-    }
-
-    #[test]
-    fn write_rules_result_emits_valid_json() {
-        let mut fi = FileIndex {
-            path: "a.ts".into(),
-            functions: vec![],
-            bindings: vec![],
-            exports: vec![],
-            violations: vec![],
-            parse_errors: 0,
-        };
-        fi.violations.push(crate::index::Violation {
-            rule: "demo".into(),
-            count: 1,
-            details: vec!["x".into()],
-        });
-        let r = ScanResult {
-            ver: 1,
-            root: ".".into(),
-            stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 },
-            file_indices: vec![fi],
-            errors: vec![],
-        };
-        for mode in
-            [OutputMode::Compact, OutputMode::Verbose, OutputMode::Files, OutputMode::Folders]
-        {
-            let mut buf = Vec::new();
-            super::write_rules_result(&r, mode, &mut buf).unwrap();
-            let v: serde_json::Value = serde_json::from_slice(&buf).unwrap();
-            assert!(v.get("ver").is_some());
-        }
-    }
-}
+#[path = "output_test.rs"]
+mod tests;
 
 pub fn write_rules_result<W: Write>(
     result: &ScanResult,
@@ -669,7 +364,8 @@ struct CompactRulesOutput {
 
 impl From<&ScanResult> for CompactRulesOutput {
     fn from(r: &ScanResult) -> Self {
-        let mut viol = Vec::new();
+        let total_violations = r.file_indices.iter().map(|fi| fi.violations.len()).sum();
+        let mut viol = Vec::with_capacity(total_violations);
         for fi in &r.file_indices {
             for v in &fi.violations {
                 viol.push((fi.path.clone(), v.rule.clone(), v.count, v.details.clone()));
@@ -691,7 +387,8 @@ struct VerboseRulesOutput {
 
 impl From<&ScanResult> for VerboseRulesOutput {
     fn from(r: &ScanResult) -> Self {
-        let mut violations = Vec::new();
+        let total_violations = r.file_indices.iter().map(|fi| fi.violations.len()).sum();
+        let mut violations = Vec::with_capacity(total_violations);
         for fi in &r.file_indices {
             for v in &fi.violations {
                 violations.push(VerboseViolation {

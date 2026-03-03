@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use oxc::ast::ast::{
-    ArrowFunctionExpression, BindingPattern, Class, Declaration, ExportDefaultDeclaration,
+    ArrowFunctionExpression, BindingPattern, Declaration, ExportDefaultDeclaration,
     ExportDefaultDeclarationKind, ExportNamedDeclaration, Expression, FormalParameters, Function,
     FunctionType, MethodDefinition, MethodDefinitionKind, ObjectProperty, PropertyKind,
     VariableDeclarator,
@@ -15,8 +15,6 @@ use crate::index::{
     BindingInfo, BindingKind, EXPORT_DEFAULT, EXPORT_NAMED, ExportInfo, FunctionInfo, FunctionKind,
     FunctionKindsFilter, LineIndex,
 };
-
-// ── Public API ───────────────────────────────────────────────────
 
 pub struct ExtractionResult {
     pub functions: Vec<FunctionInfo>,
@@ -32,7 +30,6 @@ pub fn extract_file(
 ) -> ExtractionResult {
     let lines = LineIndex::new(source);
 
-    // Phase 1: Collect exports + functions via AST walk
     let mut collector = Collector {
         functions: Vec::new(),
         exported_names: HashSet::new(),
@@ -42,17 +39,13 @@ pub fn extract_file(
         in_export: false,
         in_default_export: false,
         in_method: false,
-        class_stack: Vec::new(),
     };
     collector.visit_program(program);
 
-    // Phase 2: Collect bindings via Scoping API
     let bindings = extract_bindings(semantic, &lines, &collector.exported_names);
 
     ExtractionResult { functions: collector.functions, bindings, exports: collector.exports }
 }
-
-// ── AST Visitor ──────────────────────────────────────────────────
 
 struct Collector<'s> {
     functions: Vec<FunctionInfo>,
@@ -63,7 +56,6 @@ struct Collector<'s> {
     in_export: bool,
     in_default_export: bool,
     in_method: bool,
-    class_stack: Vec<Option<String>>,
 }
 
 impl Collector<'_> {
@@ -196,13 +188,6 @@ impl<'a> Visit<'a> for Collector<'_> {
         ast_visit::walk::walk_variable_declarator(self, it);
     }
 
-    fn visit_class(&mut self, it: &Class<'a>) {
-        let name = it.id.as_ref().map(|id| id.name.to_string());
-        self.class_stack.push(name);
-        ast_visit::walk::walk_class(self, it);
-        self.class_stack.pop();
-    }
-
     fn visit_method_definition(&mut self, it: &MethodDefinition<'a>) {
         let func = &it.value;
         let kind = match it.kind {
@@ -219,7 +204,7 @@ impl<'a> Visit<'a> for Collector<'_> {
     }
 
     fn visit_object_property(&mut self, it: &ObjectProperty<'a>) {
-        if it.method {
+        if it.method || matches!(it.kind, PropertyKind::Get | PropertyKind::Set) {
             let kind = match it.kind {
                 PropertyKind::Get => FunctionKind::Getter,
                 PropertyKind::Set => FunctionKind::Setter,
@@ -273,8 +258,6 @@ impl Collector<'_> {
     }
 }
 
-// ── Binding extraction via Scoping API ───────────────────────────
-
 fn extract_bindings(
     semantic: &Semantic<'_>,
     lines: &LineIndex,
@@ -313,28 +296,20 @@ fn extract_bindings(
 }
 
 fn flags_to_binding_kind(flags: SymbolFlags) -> Option<BindingKind> {
-    if flags.contains(SymbolFlags::ConstVariable) {
-        Some(BindingKind::Const)
-    } else if flags.contains(SymbolFlags::BlockScopedVariable) {
-        Some(BindingKind::Let)
-    } else if flags.contains(SymbolFlags::FunctionScopedVariable) {
-        Some(BindingKind::Var)
-    } else if flags.contains(SymbolFlags::Function) {
-        Some(BindingKind::Function)
-    } else if flags.contains(SymbolFlags::Class) {
-        Some(BindingKind::Class)
-    } else if flags.contains(SymbolFlags::Import) {
-        Some(BindingKind::Import)
-    } else if flags.contains(SymbolFlags::CatchVariable) {
-        Some(BindingKind::Catch)
-    } else if flags.intersects(SymbolFlags::RegularEnum | SymbolFlags::ConstEnum) {
-        Some(BindingKind::Enum)
-    } else {
-        None
+    match () {
+        () if flags.contains(SymbolFlags::ConstVariable) => Some(BindingKind::Const),
+        () if flags.contains(SymbolFlags::BlockScopedVariable) => Some(BindingKind::Let),
+        () if flags.contains(SymbolFlags::FunctionScopedVariable) => Some(BindingKind::Var),
+        () if flags.contains(SymbolFlags::Function) => Some(BindingKind::Function),
+        () if flags.contains(SymbolFlags::Class) => Some(BindingKind::Class),
+        () if flags.contains(SymbolFlags::Import) => Some(BindingKind::Import),
+        () if flags.contains(SymbolFlags::CatchVariable) => Some(BindingKind::Catch),
+        () if flags.intersects(SymbolFlags::RegularEnum | SymbolFlags::ConstEnum) => {
+            Some(BindingKind::Enum)
+        }
+        () => None,
     }
 }
-
-// ── Param extraction helper ──────────────────────────────────────
 
 pub fn extract_param_names(params: &FormalParameters<'_>) -> Vec<String> {
     params
@@ -344,32 +319,14 @@ pub fn extract_param_names(params: &FormalParameters<'_>) -> Vec<String> {
             BindingPattern::BindingIdentifier(id) => id.name.to_string(),
             BindingPattern::ObjectPattern(_) => "{...}".to_string(),
             BindingPattern::ArrayPattern(_) => "[...]".to_string(),
-            BindingPattern::AssignmentPattern(a) => match &a.left {
-                BindingPattern::BindingIdentifier(id) => id.name.to_string(),
-                _ => "...".to_string(),
-            },
+            BindingPattern::AssignmentPattern(a) => a
+                .left
+                .get_binding_identifier()
+                .map_or_else(|| "...".to_string(), |id| id.name.to_string()),
         })
         .collect()
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use oxc::allocator::Allocator;
-    use oxc::parser::{ParseOptions, Parser};
-    use oxc::span::SourceType;
-
-    #[test]
-    fn param_extraction_variants() {
-        let allocator = Allocator::default();
-        let src = "function f(a,{b},[c], d = 1){}";
-        let st = SourceType::default().with_module(false).with_script(true);
-        let ret = Parser::new(&allocator, src, st).with_options(ParseOptions::default()).parse();
-        if let oxc::ast::ast::Statement::FunctionDeclaration(fd) = &ret.program.body[0] {
-            let names = extract_param_names(&fd.params);
-            assert_eq!(names, vec!["a", "{...}", "[...]", "d"]);
-        } else {
-            panic!("unexpected AST");
-        }
-    }
-}
+#[path = "extract_test.rs"]
+mod tests;

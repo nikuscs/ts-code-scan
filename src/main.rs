@@ -95,8 +95,10 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<ExitCode> {
-    let cli = Cli::parse();
+    run_with_cli(Cli::parse())
+}
 
+fn run_with_cli(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         Commands::Index {
             root,
@@ -187,13 +189,11 @@ fn scan(
     let parsed = file_indices.len();
     let error_count = file_indices.iter().filter(|fi| fi.parse_errors > 0).count();
 
-    // Run rules (all rules when none specified)
     let mut file_indices = file_indices;
     for fi in &mut file_indices {
         rules::run_rules(enabled_rules, fi);
     }
 
-    // Sort by path for deterministic output
     file_indices.sort_by(|a, b| a.path.cmp(&b.path));
 
     Ok(ScanResult {
@@ -204,3 +204,7 @@ fn scan(
         errors: Vec::new(),
     })
 }
+
+#[cfg(test)]
+#[path = "main_test.rs"]
+mod tests;

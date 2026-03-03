@@ -29,9 +29,8 @@ impl Default for WalkConfig {
 }
 
 pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
-    // Single-file mode
     if let Some(path) = &config.single_file {
-        return if path.exists() {
+        return if path.is_file() {
             Ok(vec![path.clone()])
         } else {
             anyhow::bail!("file not found: {}", path.display());
@@ -47,7 +46,6 @@ pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
     let mut builder = WalkBuilder::new(&config.root);
     builder.hidden(true).git_ignore(true).git_global(true);
 
-    // Add default and custom ignore patterns for excluded dirs
     let mut overrides = ignore::overrides::OverrideBuilder::new(&config.root);
     for pattern in DEFAULT_EXCLUDE_DIRS {
         let pat = pattern.trim_matches('/');
@@ -57,7 +55,6 @@ pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
     }
     for pattern in &config.exclude {
         let pat = pattern.trim_matches('/');
-        // Exclude the directory and all its children at any depth
         overrides
             .add(&format!("!**/{pat}/**"))
             .with_context(|| format!("invalid exclude pattern: {pattern}"))?;
@@ -76,12 +73,10 @@ pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
 
         let path = entry.path();
 
-        // Check extension
         if !has_matching_extension(path, &extensions) {
             continue;
         }
 
-        // Check file size
         if let Ok(meta) = entry.metadata()
             && meta.len() > config.max_bytes
         {
@@ -92,7 +87,6 @@ pub fn collect_files(config: &WalkConfig) -> Result<Vec<PathBuf>> {
         files.push(path.to_path_buf());
     }
 
-    // Deterministic ordering
     files.sort();
     Ok(files)
 }
@@ -104,85 +98,5 @@ fn has_matching_extension(path: &Path, extensions: &[&str]) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extension_matching() {
-        assert!(has_matching_extension(Path::new("foo.ts"), &["ts", "tsx"]));
-        assert!(has_matching_extension(Path::new("foo.TSX"), &["ts", "tsx"]));
-        assert!(!has_matching_extension(Path::new("foo.rs"), &["ts", "tsx"]));
-        assert!(!has_matching_extension(Path::new("foo"), &["ts", "tsx"]));
-    }
-
-    #[test]
-    fn collect_files_respects_single_file_and_size() {
-        use std::fs;
-        use tempfile::tempdir;
-
-        let dir = tempdir().unwrap();
-        let p1 = dir.path().join("a.ts");
-        let p2 = dir.path().join("b.rs");
-        fs::write(&p1, "export function x(){}\n").unwrap();
-        fs::write(&p2, "fn y(){}\n").unwrap();
-
-        // Directory walk only picks ts by default
-        let files =
-            collect_files(&WalkConfig { root: dir.path().into(), ..Default::default() }).unwrap();
-        assert_eq!(files.len(), 1);
-        assert_eq!(files[0].file_name().unwrap().to_str().unwrap(), "a.ts");
-
-        // Single file path works
-        let files = collect_files(&WalkConfig {
-            root: dir.path().into(),
-            single_file: Some(p2.clone()),
-            ..Default::default()
-        })
-        .unwrap();
-        assert_eq!(files, vec![p2]);
-
-        // Large file gets skipped
-        let big = dir.path().join("big.ts");
-        fs::write(&big, vec![b'x'; 2_000_000]).unwrap();
-        let files = collect_files(&WalkConfig {
-            root: dir.path().into(),
-            max_bytes: 1024,
-            ..Default::default()
-        })
-        .unwrap();
-        assert!(!files.iter().any(|p| p.file_name().unwrap() == "big.ts"));
-
-        // Exclude directory
-        let sub = dir.path().join("skip");
-        fs::create_dir_all(&sub).unwrap();
-        fs::write(sub.join("c.ts"), "export function c(){}\n").unwrap();
-        let files = collect_files(&WalkConfig {
-            root: dir.path().into(),
-            exclude: vec!["skip".into()],
-            ..Default::default()
-        })
-        .unwrap();
-        assert!(!files.iter().any(|p| p.file_name().unwrap() == "c.ts"));
-
-        // Default excludes: node_modules should be skipped automatically
-        let nm = dir.path().join("node_modules");
-        fs::create_dir_all(&nm).unwrap();
-        fs::write(nm.join("pkg.ts"), "export function nm(){}\n").unwrap();
-        let files =
-            collect_files(&WalkConfig { root: dir.path().into(), ..Default::default() }).unwrap();
-        assert!(!files.iter().any(|p| p.to_string_lossy().contains("node_modules")));
-    }
-
-    #[test]
-    fn invalid_exclude_pattern_errors() {
-        use tempfile::tempdir;
-        let dir = tempdir().unwrap();
-        // Pattern with unmatched '[' should fail in override builder
-        let res = collect_files(&WalkConfig {
-            root: dir.path().into(),
-            exclude: vec!["foo[".into()],
-            ..Default::default()
-        });
-        assert!(res.is_err());
-    }
-}
+#[path = "walk_test.rs"]
+mod tests;
