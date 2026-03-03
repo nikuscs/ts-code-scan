@@ -78,20 +78,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9 # pin action
         with:
           toolchain: stable
-          components: llvm-tools-preview
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked --version 0.6.10
-      - name: Generate coverage (HTML + lcov)
-        run: |
-          cargo llvm-cov --workspace --lcov --html --fail-under-lines 100 \
-            --ignore-filename-regex 'src/main.rs'
-      - name: Upload coverage HTML
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: coverage-html
-          path: target/llvm-cov/html
-      - name: Upload lcov report
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: coverage-lcov
-          path: lcov.info
+      - name: Install tarpaulin
+        run: cargo install cargo-tarpaulin --locked --version 0.31.0
+      - name: Run coverage (min 90%)
+        run: cargo tarpaulin --out Xml --fail-under 90 --exclude-files src/main.rs
