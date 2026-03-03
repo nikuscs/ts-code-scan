@@ -54,7 +54,6 @@ jobs:
     outputs:
       version: ${{ steps.bump.outputs.version }}
       tag: ${{ steps.bump.outputs.tag }}
-      commit_sha: ${{ steps.commit.outputs.sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -72,7 +71,12 @@ jobs:
       - name: Get current version
         id: current
         run: |
-          VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          TAG_VERSION=$(git tag -l 'v[0-9]*.[0-9]*.[0-9]*' | sed 's/^v//' | sort -V | tail -n1 || true)
+          if [ -n "$TAG_VERSION" ]; then
+            VERSION="$TAG_VERSION"
+          else
+            VERSION=$(grep '^version = ' Cargo.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Current version: $VERSION"
 
@@ -102,21 +106,14 @@ jobs:
           echo "tag=v$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "New version: $NEW_VERSION"
 
-      - name: Update Cargo.toml
+      - name: Create tag
         run: |
-          sed -i 's/^version = ".*"/version = "${{ steps.bump.outputs.version }}"/' Cargo.toml
-          cat Cargo.toml | head -10
-
-      - name: Commit and tag
-        id: commit
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml
-          git commit -m "chore: bump version to ${{ steps.bump.outputs.version }}"
-          echo "sha=$(git rev-parse HEAD)" >> $GITHUB_OUTPUT
+          if git ls-remote --tags origin "refs/tags/${{ steps.bump.outputs.tag }}" | grep -q "${{ steps.bump.outputs.tag }}"; then
+            echo "::error::Tag ${{ steps.bump.outputs.tag }} already exists on origin"
+            exit 1
+          fi
           git tag -a "${{ steps.bump.outputs.tag }}" -m "Release ${{ steps.bump.outputs.tag }}"
-          git push origin main --follow-tags
+          git push origin "${{ steps.bump.outputs.tag }}"
 
   build:
     name: Build (${{ matrix.target }})
@@ -255,15 +252,10 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Delete tag and revert commit
+      - name: Delete tag
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           echo "Deleting tag ${{ needs.create-tag.outputs.tag }}..."
           git push --delete origin ${{ needs.create-tag.outputs.tag }} || true
-
-          echo "Reverting version bump commit ${{ needs.create-tag.outputs.commit_sha }}..."
-          git pull origin main
-          git revert ${{ needs.create-tag.outputs.commit_sha }} --no-edit
-          git push origin main
