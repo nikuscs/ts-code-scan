@@ -133,11 +133,25 @@ mod tests {
             })
             .collect();
         let bindings = if binding_unused {
-            vec![BindingInfo { name: "tmp".into(), kind: crate::index::BindingKind::Const, exported: false, refs: 0, line: 1, col: 1 }]
+            vec![BindingInfo {
+                name: "tmp".into(),
+                kind: crate::index::BindingKind::Const,
+                exported: false,
+                refs: 0,
+                line: 1,
+                col: 1,
+            }]
         } else {
             vec![]
         };
-        FileIndex { path: path.into(), functions, bindings, exports: vec![], violations: vec![], parse_errors: 0 }
+        FileIndex {
+            path: path.into(),
+            functions,
+            bindings,
+            exports: vec![],
+            violations: vec![],
+            parse_errors: 0,
+        }
     }
 
     #[test]
@@ -151,12 +165,16 @@ mod tests {
     fn one_exported_function_per_file_flags_multiple() {
         let mut fi = mk_fi("src/a.ts", &["a", "b"], false);
         run_rules(&["one_exported_function_per_file".into()], &mut fi);
-        assert!(fi.violations.iter().any(|v| v.rule == "one_exported_function_per_file" && v.count == 2));
+        assert!(
+            fi.violations
+                .iter()
+                .any(|v| v.rule == "one_exported_function_per_file" && v.count == 2)
+        );
     }
 
     #[test]
     fn max_functions_per_file_flags_excess() {
-        let mut fi = mk_fi("a.ts", &["a", "b", "c"], false);
+        let fi = mk_fi("a.ts", &["a", "b", "c"], false);
         // activate only this rule with a low threshold by instantiating directly
         let v = MaxFunctionsPerFile { max: 2 }.check(&fi).unwrap();
         assert_eq!(v.rule, "max_functions_per_file");

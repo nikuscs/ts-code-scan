@@ -91,15 +91,7 @@ impl From<&ScanResult> for CompactOutput {
             }
         }
 
-        Self {
-            ver: r.ver,
-            stats: r.stats.clone(),
-            f,
-            b,
-            x,
-            viol,
-            err: r.errors.clone(),
-        }
+        Self { ver: r.ver, stats: r.stats.clone(), f, b, x, viol, err: r.errors.clone() }
     }
 }
 
@@ -255,30 +247,50 @@ impl From<&ScanResult> for FilesOutput {
         let mut map: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for fi in &r.file_indices {
             // Collect named functions with spans
-            struct Named<'a> { name: &'a str, start: u32, end: u32 }
-            let named: Vec<Named> = fi.functions.iter()
-                .filter_map(|f| f.name.as_deref().map(|n| Named { name: n, start: f.line, end: f.line_end }))
+            struct Named<'a> {
+                name: &'a str,
+                start: u32,
+                end: u32,
+            }
+            let named: Vec<Named> = fi
+                .functions
+                .iter()
+                .filter_map(|f| {
+                    f.name.as_deref().map(|n| Named { name: n, start: f.line, end: f.line_end })
+                })
                 .collect();
 
             let mut out: Vec<String> = Vec::new();
             for child in &named {
                 // find nearest enclosing parent (smallest span that still encloses)
                 let mut parent_name: Option<&str> = None;
-                let mut parent_span: Option<(u32,u32)> = None;
+                let mut parent_span: Option<(u32, u32)> = None;
                 for cand in &named {
-                    if core::ptr::eq(cand, child) { continue; }
+                    if core::ptr::eq(cand, child) {
+                        continue;
+                    }
                     if cand.start <= child.start && cand.end >= child.end {
                         match parent_span {
-                            Some((ps,pe)) => {
+                            Some((ps, pe)) => {
                                 let cur_len = pe.saturating_sub(ps);
                                 let new_len = cand.end.saturating_sub(cand.start);
-                                if new_len < cur_len { parent_span = Some((cand.start,cand.end)); parent_name = Some(cand.name); }
+                                if new_len < cur_len {
+                                    parent_span = Some((cand.start, cand.end));
+                                    parent_name = Some(cand.name);
+                                }
                             }
-                            None => { parent_span = Some((cand.start,cand.end)); parent_name = Some(cand.name); }
+                            None => {
+                                parent_span = Some((cand.start, cand.end));
+                                parent_name = Some(cand.name);
+                            }
                         }
                     }
                 }
-                if let Some(p) = parent_name { out.push(format!("{}.{}", p, child.name)); } else { out.push(child.name.to_string()); }
+                if let Some(p) = parent_name {
+                    out.push(format!("{}.{}", p, child.name));
+                } else {
+                    out.push(child.name.to_string());
+                }
             }
             out.sort();
             out.dedup();
@@ -338,30 +350,81 @@ impl From<&ScanResult> for FoldersOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{BindingInfo, BindingKind, FileIndex, FunctionInfo, FunctionKind, ScanResult, Stats};
+    use crate::index::{
+        BindingInfo, BindingKind, FileIndex, FunctionInfo, FunctionKind, ScanResult, Stats,
+    };
 
     fn scan_result_example() -> ScanResult {
         let fi1 = FileIndex {
             path: "dir/a.ts".to_string(),
             functions: vec![
-                FunctionInfo { name: Some("foo".into()), kind: FunctionKind::Declaration, exported: true, is_async: false, is_generator: false, line: 1, col: 1, line_end: 1 },
-                FunctionInfo { name: None, kind: FunctionKind::Arrow, exported: false, is_async: false, is_generator: false, line: 2, col: 1, line_end: 2 },
-                FunctionInfo { name: Some("foo".into()), kind: FunctionKind::Declaration, exported: true, is_async: false, is_generator: false, line: 3, col: 1, line_end: 3 },
+                FunctionInfo {
+                    name: Some("foo".into()),
+                    kind: FunctionKind::Declaration,
+                    exported: true,
+                    is_async: false,
+                    is_generator: false,
+                    line: 1,
+                    col: 1,
+                    line_end: 1,
+                },
+                FunctionInfo {
+                    name: None,
+                    kind: FunctionKind::Arrow,
+                    exported: false,
+                    is_async: false,
+                    is_generator: false,
+                    line: 2,
+                    col: 1,
+                    line_end: 2,
+                },
+                FunctionInfo {
+                    name: Some("foo".into()),
+                    kind: FunctionKind::Declaration,
+                    exported: true,
+                    is_async: false,
+                    is_generator: false,
+                    line: 3,
+                    col: 1,
+                    line_end: 3,
+                },
             ],
-            bindings: vec![BindingInfo { name: "x".into(), kind: BindingKind::Const, exported: false, refs: 0, line: 1, col: 1 }],
+            bindings: vec![BindingInfo {
+                name: "x".into(),
+                kind: BindingKind::Const,
+                exported: false,
+                refs: 0,
+                line: 1,
+                col: 1,
+            }],
             exports: vec![],
             violations: vec![],
             parse_errors: 0,
         };
         let fi2 = FileIndex {
             path: "b.ts".to_string(),
-            functions: vec![FunctionInfo { name: Some("bar".into()), kind: FunctionKind::Declaration, exported: false, is_async: false, is_generator: false, line: 1, col: 1, line_end: 1 }],
+            functions: vec![FunctionInfo {
+                name: Some("bar".into()),
+                kind: FunctionKind::Declaration,
+                exported: false,
+                is_async: false,
+                is_generator: false,
+                line: 1,
+                col: 1,
+                line_end: 1,
+            }],
             bindings: vec![],
             exports: vec![],
             violations: vec![],
             parse_errors: 0,
         };
-        ScanResult { ver: 1, root: ".".into(), stats: Stats { files: 2, parsed: 2, skipped: 0, errors: 0 }, file_indices: vec![fi1, fi2], errors: vec![] }
+        ScanResult {
+            ver: 1,
+            root: ".".into(),
+            stats: Stats { files: 2, parsed: 2, skipped: 0, errors: 0 },
+            file_indices: vec![fi1, fi2],
+            errors: vec![],
+        }
     }
 
     #[test]
@@ -396,13 +459,49 @@ mod tests {
         let fi = FileIndex {
             path: "x.ts".into(),
             functions: vec![
-                FunctionInfo { name: Some("builder".into()), kind: FunctionKind::Declaration, exported: false, is_async: false, is_generator: false, line: 1, col: 1, line_end: 100 },
-                FunctionInfo { name: Some("get".into()), kind: FunctionKind::ObjectMethod, exported: false, is_async: false, is_generator: false, line: 10, col: 1, line_end: 20 },
-                FunctionInfo { name: Some("util".into()), kind: FunctionKind::Declaration, exported: false, is_async: false, is_generator: false, line: 150, col: 1, line_end: 160 },
+                FunctionInfo {
+                    name: Some("builder".into()),
+                    kind: FunctionKind::Declaration,
+                    exported: false,
+                    is_async: false,
+                    is_generator: false,
+                    line: 1,
+                    col: 1,
+                    line_end: 100,
+                },
+                FunctionInfo {
+                    name: Some("get".into()),
+                    kind: FunctionKind::ObjectMethod,
+                    exported: false,
+                    is_async: false,
+                    is_generator: false,
+                    line: 10,
+                    col: 1,
+                    line_end: 20,
+                },
+                FunctionInfo {
+                    name: Some("util".into()),
+                    kind: FunctionKind::Declaration,
+                    exported: false,
+                    is_async: false,
+                    is_generator: false,
+                    line: 150,
+                    col: 1,
+                    line_end: 160,
+                },
             ],
-            bindings: vec![], exports: vec![], violations: vec![], parse_errors: 0,
+            bindings: vec![],
+            exports: vec![],
+            violations: vec![],
+            parse_errors: 0,
         };
-        let r = ScanResult { ver: 1, root: ".".into(), stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 }, file_indices: vec![fi], errors: vec![] };
+        let r = ScanResult {
+            ver: 1,
+            root: ".".into(),
+            stats: Stats { files: 1, parsed: 1, skipped: 0, errors: 0 },
+            file_indices: vec![fi],
+            errors: vec![],
+        };
         let files = FilesOutput::from(&r);
         let names = files.files.get("x.ts").unwrap();
         assert!(names.contains(&"builder.get".to_string()));

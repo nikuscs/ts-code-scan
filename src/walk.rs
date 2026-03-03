@@ -4,16 +4,8 @@ use anyhow::{Context, Result};
 use ignore::WalkBuilder;
 
 const DEFAULT_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx"];
-const DEFAULT_EXCLUDE_DIRS: &[&str] = &[
-    "node_modules",
-    "dist",
-    "build",
-    ".next",
-    ".git",
-    "coverage",
-    ".turbo",
-    ".cache",
-];
+const DEFAULT_EXCLUDE_DIRS: &[&str] =
+    &["node_modules", "dist", "build", ".next", ".git", "coverage", ".turbo", ".cache"];
 const DEFAULT_MAX_BYTES: u64 = 1_048_576; // 1 MB
 
 pub struct WalkConfig {
@@ -135,32 +127,49 @@ mod tests {
         fs::write(&p2, "fn y(){}\n").unwrap();
 
         // Directory walk only picks ts by default
-        let files = collect_files(&WalkConfig { root: dir.path().into(), ..Default::default() }).unwrap();
+        let files =
+            collect_files(&WalkConfig { root: dir.path().into(), ..Default::default() }).unwrap();
         assert_eq!(files.len(), 1);
         assert_eq!(files[0].file_name().unwrap().to_str().unwrap(), "a.ts");
 
         // Single file path works
-        let files = collect_files(&WalkConfig { root: dir.path().into(), single_file: Some(p2.clone()), ..Default::default() }).unwrap();
+        let files = collect_files(&WalkConfig {
+            root: dir.path().into(),
+            single_file: Some(p2.clone()),
+            ..Default::default()
+        })
+        .unwrap();
         assert_eq!(files, vec![p2]);
 
         // Large file gets skipped
         let big = dir.path().join("big.ts");
         fs::write(&big, vec![b'x'; 2_000_000]).unwrap();
-        let files = collect_files(&WalkConfig { root: dir.path().into(), max_bytes: 1024, ..Default::default() }).unwrap();
+        let files = collect_files(&WalkConfig {
+            root: dir.path().into(),
+            max_bytes: 1024,
+            ..Default::default()
+        })
+        .unwrap();
         assert!(!files.iter().any(|p| p.file_name().unwrap() == "big.ts"));
 
         // Exclude directory
         let sub = dir.path().join("skip");
         fs::create_dir_all(&sub).unwrap();
         fs::write(sub.join("c.ts"), "export function c(){}\n").unwrap();
-        let files = collect_files(&WalkConfig { root: dir.path().into(), exclude: vec!["skip".into()], ..Default::default() }).unwrap();
+        let files = collect_files(&WalkConfig {
+            root: dir.path().into(),
+            exclude: vec!["skip".into()],
+            ..Default::default()
+        })
+        .unwrap();
         assert!(!files.iter().any(|p| p.file_name().unwrap() == "c.ts"));
 
         // Default excludes: node_modules should be skipped automatically
         let nm = dir.path().join("node_modules");
         fs::create_dir_all(&nm).unwrap();
         fs::write(nm.join("pkg.ts"), "export function nm(){}\n").unwrap();
-        let files = collect_files(&WalkConfig { root: dir.path().into(), ..Default::default() }).unwrap();
+        let files =
+            collect_files(&WalkConfig { root: dir.path().into(), ..Default::default() }).unwrap();
         assert!(!files.iter().any(|p| p.to_string_lossy().contains("node_modules")));
     }
 }

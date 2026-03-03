@@ -66,11 +66,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let root = dir.path();
         let file = root.join("a.ts");
-        fs::write(&file, r#"
+        fs::write(
+            &file,
+            r#"
             export function foo() {}
             export const bar = () => {};
             class C { get x(){ return 1 } }
-        "#).unwrap();
+        "#,
+        )
+        .unwrap();
 
         let root_canon = root.canonicalize().unwrap();
         let fi = process_file(&file, &root_canon, FunctionKindsFilter::All).unwrap();
